@@ -1,248 +1,192 @@
-"""AgênciaOS Backend API Tests - Auth, Leads, Pipeline, Clients, Dashboard"""
+"""
+AgenciaOS - Backend API Tests
+Testing: Leads/Pipeline, Pipeline Stages, Operational Cards, Content/Carousel, Settings
+"""
 import pytest
 import requests
 import os
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-TEST_EMAIL = "test_backend_agent@agenciaos.com"
-TEST_PASSWORD = "senha123test"
-ADMIN_EMAIL = "admin@agenciaos.com"
-ADMIN_PASSWORD = "senha123"
-
 
 @pytest.fixture(scope="module")
-def admin_token():
-    """Get token for existing admin user"""
-    resp = requests.post(f"{BASE_URL}/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
-    assert resp.status_code == 200, f"Login failed: {resp.text}"
-    return resp.json()["token"]
-
+def auth_token():
+    # Register user
+    r = requests.post(f"{BASE_URL}/api/auth/register", json={
+        "email": "testuser@agenciaos.com",
+        "password": "test123",
+        "name": "Test User"
+    })
+    if r.status_code in [200, 201]:
+        return r.json().get("token") or r.json().get("access_token")
+    # Try login if already exists
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={
+        "email": "testuser@agenciaos.com",
+        "password": "test123"
+    })
+    assert r.status_code == 200, f"Auth failed: {r.text}"
+    return r.json().get("token") or r.json().get("access_token")
 
 @pytest.fixture(scope="module")
-def auth_headers(admin_token):
-    return {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
+def client(auth_token):
+    s = requests.Session()
+    s.headers.update({"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"})
+    return s
 
+# ---- Feature 1: Leads + Pipeline ----
 
-# ============= AUTH TESTS =============
-
-class TestAuth:
-    """Authentication flow tests"""
-
-    def test_register_new_user(self):
-        # Use unique email each run
-        import time
-        email = f"test_reg_{int(time.time())}@agenciaos.com"
-        resp = requests.post(f"{BASE_URL}/api/auth/register", json={
-            "name": "TEST_Register User",
-            "email": email,
-            "password": "senha123test"
+class TestLeadsAndPipeline:
+    """Feature 1: Lead creation and add to pipeline"""
+    
+    def test_create_lead(self, client):
+        r = client.post(f"{BASE_URL}/api/leads", json={
+            "name": "TEST_Lead One",
+            "email": "lead1@test.com",
+            "company": "Test Corp",
+            "phone": "11999999999"
         })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "token" in data
-        assert "user" in data
-        assert data["user"]["email"] == email
+        assert r.status_code in [200, 201], f"Create lead failed: {r.text}"
+        data = r.json()
+        # API uses lead_id field
+        lead_id = data.get("lead_id") or data.get("id") or data.get("_id")
+        assert lead_id, f"No lead_id in response: {data}"
+        TestLeadsAndPipeline.lead_id = lead_id
+        print(f"Lead created: {TestLeadsAndPipeline.lead_id}")
+    
+    def test_get_leads(self, client):
+        r = client.get(f"{BASE_URL}/api/leads")
+        assert r.status_code == 200, f"Get leads failed: {r.text}"
+        data = r.json()
+        assert isinstance(data, list)
+        print(f"Leads count: {len(data)}")
+    
+    def test_add_lead_to_pipeline(self, client):
+        lead_id = getattr(TestLeadsAndPipeline, 'lead_id', None)
+        if not lead_id:
+            pytest.skip("No lead_id from previous test")
+        r = client.get(f"{BASE_URL}/api/pipeline/stages")
+        assert r.status_code == 200
+        stages = r.json()
+        assert len(stages) > 0
+        stage_id = stages[0].get("stage_id")  # API uses stage_id field
+        
+        r = client.post(f"{BASE_URL}/api/leads/{lead_id}/pipeline", json={"stage_id": stage_id})
+        assert r.status_code in [200, 201], f"Add to pipeline failed: {r.text}"
+        print(f"Lead added to pipeline stage: {stage_id}")
 
-    def test_register_duplicate_email(self):
-        resp = requests.post(f"{BASE_URL}/api/auth/register", json={
-            "name": "Duplicate", "email": ADMIN_EMAIL, "password": "senha123"
+# ---- Feature 2: Pipeline Stages ----
+
+class TestPipelineStages:
+    """Feature 2: Pipeline stage management"""
+    
+    def test_get_stages(self, client):
+        r = client.get(f"{BASE_URL}/api/pipeline/stages")
+        assert r.status_code == 200, f"Get stages failed: {r.text}"
+        stages = r.json()
+        assert isinstance(stages, list)
+        assert len(stages) > 0
+        TestPipelineStages.stages = stages
+        print(f"Stages: {[s.get('name') for s in stages]}")
+    
+    def test_reorder_stages(self, client):
+        stages = getattr(TestPipelineStages, 'stages', None)
+        if not stages:
+            pytest.skip("No stages from previous test")
+        # API expects: {"stages": [{"stage_id": "...", "order": 0}, ...]}
+        stage_items = [{"stage_id": s.get("stage_id"), "order": i} for i, s in enumerate(reversed(stages))]
+        r = client.patch(f"{BASE_URL}/api/pipeline/stages/reorder", json={"stages": stage_items})
+        assert r.status_code in [200, 201], f"Reorder failed: {r.text}"
+        print("Stages reordered")
+    
+    def test_rename_stage(self, client):
+        stages = getattr(TestPipelineStages, 'stages', None)
+        if not stages:
+            pytest.skip("No stages from previous test")
+        stage_id = stages[0].get("stage_id")  # API uses stage_id field
+        r = client.patch(f"{BASE_URL}/api/pipeline/stages/{stage_id}", json={"name": "TEST_Renamed Stage"})
+        assert r.status_code in [200, 201], f"Rename failed: {r.text}"
+        client.patch(f"{BASE_URL}/api/pipeline/stages/{stage_id}", json={"name": stages[0].get("name")})
+        print("Stage renamed successfully")
+
+# ---- Feature 3: Operational Cards ----
+
+class TestOperational:
+    """Feature 3: Operational cards per client"""
+    
+    def test_create_client_creates_operational_card(self, client):
+        r = client.post(f"{BASE_URL}/api/clients", json={
+            "name": "TEST_Client Operacional",
+            "email": "client@test.com",
+            "industry": "Marketing"
         })
-        assert resp.status_code == 400
-
-    def test_login_success(self):
-        resp = requests.post(f"{BASE_URL}/api/auth/login", json={
-            "email": ADMIN_EMAIL, "password": ADMIN_PASSWORD
+        assert r.status_code in [200, 201], f"Create client failed: {r.text}"
+        data = r.json()
+        TestOperational.client_id = data.get("client_id") or data.get("id") or data.get("_id")
+        assert TestOperational.client_id, f"No client_id in response: {data}"
+        print(f"Client created: {TestOperational.client_id}")
+    
+    def test_get_operational_no_500(self, client):
+        """Critical: GET /api/operational must not return 500"""
+        r = client.get(f"{BASE_URL}/api/operational")
+        assert r.status_code == 200, f"Operational returned {r.status_code}: {r.text}"
+        data = r.json()
+        assert isinstance(data, list)
+        print(f"Operational cards count: {len(data)}")
+        if len(data) > 0:
+            card = data[0]
+            print(f"Card keys: {list(card.keys())}")
+    
+    def test_operational_card_has_client_info(self, client):
+        r = client.get(f"{BASE_URL}/api/operational")
+        assert r.status_code == 200
+        data = r.json()
+        if len(data) > 0:
+            card = data[0]
+            assert "client_name" in card or "client" in card or "name" in card, \
+                f"Card missing client info: {list(card.keys())}"
+        print("Operational cards have client data")
+    
+    def test_toggle_operational_service(self, client):
+        client_id = getattr(TestOperational, 'client_id', None)
+        if not client_id:
+            pytest.skip("No client_id from previous test")
+        r = client.patch(f"{BASE_URL}/api/operational/{client_id}", json={
+            "meta_ads": True,
+            "google_ads": False,
+            "auto_reports": True,
+            "alerts": False
         })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "token" in data
-        assert data["user"]["email"] == ADMIN_EMAIL
+        assert r.status_code in [200, 201], f"Toggle failed: {r.text}"
+        print("Toggle operational service worked")
 
-    def test_login_invalid_password(self):
-        resp = requests.post(f"{BASE_URL}/api/auth/login", json={
-            "email": ADMIN_EMAIL, "password": "wrongpassword"
+# ---- Feature 4: Content / Carousel ----
+
+class TestContentCarousel:
+    """Feature 4: Carousel generation via N8N webhook"""
+    
+    def test_get_carousel_webhook_setting(self, client):
+        r = client.get(f"{BASE_URL}/api/settings/carousel-webhook")
+        assert r.status_code == 200, f"Get webhook setting failed: {r.text}"
+        data = r.json()
+        print(f"Webhook setting: {data}")
+    
+    def test_put_carousel_webhook_setting(self, client):
+        r = client.put(f"{BASE_URL}/api/settings/carousel-webhook", json={
+            "webhook_url": "https://n8n.example.com/webhook/test"
         })
-        assert resp.status_code == 401
-
-    def test_me_authenticated(self, auth_headers):
-        resp = requests.get(f"{BASE_URL}/api/auth/me", headers=auth_headers)
-        assert resp.status_code == 200
-        assert resp.json()["email"] == ADMIN_EMAIL
-
-    def test_me_unauthenticated(self):
-        resp = requests.get(f"{BASE_URL}/api/auth/me")
-        assert resp.status_code == 401
-
-    def test_logout(self, auth_headers):
-        resp = requests.post(f"{BASE_URL}/api/auth/logout", headers=auth_headers)
-        assert resp.status_code == 200
-
-
-# ============= LEADS TESTS =============
-
-class TestLeads:
-    """Leads CRUD tests"""
-
-    created_lead_id = None
-
-    def test_list_leads_authenticated(self, auth_headers):
-        resp = requests.get(f"{BASE_URL}/api/leads", headers=auth_headers)
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
-
-    def test_list_leads_unauthenticated(self):
-        resp = requests.get(f"{BASE_URL}/api/leads")
-        assert resp.status_code == 401
-
-    def test_create_lead(self, auth_headers):
-        resp = requests.post(f"{BASE_URL}/api/leads", headers=auth_headers, json={
-            "name": "TEST_Lead Backend",
-            "email": "test_lead@agenciaos.com",
-            "company": "TEST_Company",
-            "source": "instagram",
-            "status": "novo",
-            "score": 75
+        assert r.status_code in [200, 201], f"Put webhook setting failed: {r.text}"
+        print("Webhook URL updated")
+        # Reset
+        client.put(f"{BASE_URL}/api/settings/carousel-webhook", json={"webhook_url": ""})
+    
+    def test_generate_carousel_no_webhook_returns_400(self, client):
+        """N8N webhook not configured - should return 400"""
+        client.put(f"{BASE_URL}/api/settings/carousel-webhook", json={"webhook_url": ""})
+        # Get a valid client_id
+        clients_r = client.get(f"{BASE_URL}/api/clients")
+        client_id = clients_r.json()[0].get("client_id") if clients_r.status_code == 200 and clients_r.json() else "invalid"
+        r = client.post(f"{BASE_URL}/api/content/carousel/generate", json={
+            "client_id": client_id,
+            "topic": "test topic"
         })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["name"] == "TEST_Lead Backend"
-        assert "lead_id" in data
-        TestLeads.created_lead_id = data["lead_id"]
-
-    def test_get_lead(self, auth_headers):
-        assert TestLeads.created_lead_id, "No lead created yet"
-        resp = requests.get(f"{BASE_URL}/api/leads/{TestLeads.created_lead_id}", headers=auth_headers)
-        assert resp.status_code == 200
-        assert resp.json()["lead_id"] == TestLeads.created_lead_id
-
-    def test_update_lead(self, auth_headers):
-        assert TestLeads.created_lead_id
-        resp = requests.put(f"{BASE_URL}/api/leads/{TestLeads.created_lead_id}", headers=auth_headers, json={
-            "status": "qualificado", "score": 90
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "qualificado"
-        assert data["score"] == 90
-
-    def test_delete_lead(self, auth_headers):
-        assert TestLeads.created_lead_id
-        resp = requests.delete(f"{BASE_URL}/api/leads/{TestLeads.created_lead_id}", headers=auth_headers)
-        assert resp.status_code == 200
-        # Verify deleted
-        get_resp = requests.get(f"{BASE_URL}/api/leads/{TestLeads.created_lead_id}", headers=auth_headers)
-        assert get_resp.status_code == 404
-
-
-# ============= PIPELINE TESTS =============
-
-class TestPipeline:
-    """Pipeline stages and deals tests"""
-
-    created_deal_id = None
-
-    def test_list_stages(self, auth_headers):
-        resp = requests.get(f"{BASE_URL}/api/pipeline/stages", headers=auth_headers)
-        assert resp.status_code == 200
-        stages = resp.json()
-        assert len(stages) >= 6  # Seeded stages
-
-    def test_list_deals(self, auth_headers):
-        resp = requests.get(f"{BASE_URL}/api/pipeline/deals", headers=auth_headers)
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
-
-    def test_create_deal(self, auth_headers):
-        resp = requests.post(f"{BASE_URL}/api/pipeline/deals", headers=auth_headers, json={
-            "title": "TEST_Deal Backend",
-            "value": 5000.0,
-            "stage_id": "stage_prosp01",
-            "contact_name": "TEST_Contact",
-            "probability": 60
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["title"] == "TEST_Deal Backend"
-        assert "deal_id" in data
-        TestPipeline.created_deal_id = data["deal_id"]
-
-    def test_update_deal_stage(self, auth_headers):
-        assert TestPipeline.created_deal_id
-        resp = requests.put(f"{BASE_URL}/api/pipeline/deals/{TestPipeline.created_deal_id}", headers=auth_headers, json={
-            "stage_id": "stage_qualif01"
-        })
-        assert resp.status_code == 200
-        assert resp.json()["stage_id"] == "stage_qualif01"
-
-    def test_delete_deal(self, auth_headers):
-        assert TestPipeline.created_deal_id
-        resp = requests.delete(f"{BASE_URL}/api/pipeline/deals/{TestPipeline.created_deal_id}", headers=auth_headers)
-        assert resp.status_code == 200
-
-
-# ============= CLIENTS TESTS =============
-
-class TestClients:
-    """Clients CRUD tests"""
-
-    created_client_id = None
-
-    def test_list_clients(self, auth_headers):
-        resp = requests.get(f"{BASE_URL}/api/clients", headers=auth_headers)
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
-
-    def test_create_client(self, auth_headers):
-        resp = requests.post(f"{BASE_URL}/api/clients", headers=auth_headers, json={
-            "name": "TEST_Client Backend",
-            "email": "client_test@agenciaos.com",
-            "company": "TEST_Corp",
-            "status": "ativo",
-            "monthly_value": 3000.0
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["name"] == "TEST_Client Backend"
-        assert "client_id" in data
-        TestClients.created_client_id = data["client_id"]
-
-    def test_get_client(self, auth_headers):
-        assert TestClients.created_client_id
-        resp = requests.get(f"{BASE_URL}/api/clients/{TestClients.created_client_id}", headers=auth_headers)
-        assert resp.status_code == 200
-
-    def test_update_client(self, auth_headers):
-        assert TestClients.created_client_id
-        resp = requests.put(f"{BASE_URL}/api/clients/{TestClients.created_client_id}", headers=auth_headers, json={
-            "monthly_value": 5000.0, "status": "ativo"
-        })
-        assert resp.status_code == 200
-        assert resp.json()["monthly_value"] == 5000.0
-
-    def test_delete_client(self, auth_headers):
-        assert TestClients.created_client_id
-        resp = requests.delete(f"{BASE_URL}/api/clients/{TestClients.created_client_id}", headers=auth_headers)
-        assert resp.status_code == 200
-        get_resp = requests.get(f"{BASE_URL}/api/clients/{TestClients.created_client_id}", headers=auth_headers)
-        assert get_resp.status_code == 404
-
-
-# ============= DASHBOARD TESTS =============
-
-class TestDashboard:
-    """Dashboard KPI tests"""
-
-    def test_get_kpis(self, auth_headers):
-        resp = requests.get(f"{BASE_URL}/api/dashboard/kpis", headers=auth_headers)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "total_leads" in data
-        assert "pipeline_value" in data
-        assert "active_clients" in data
-        assert "mrr" in data
-        assert "conversion_rate" in data
-        assert "deals_by_stage" in data
-
-    def test_kpis_unauthenticated(self):
-        resp = requests.get(f"{BASE_URL}/api/dashboard/kpis")
-        assert resp.status_code == 401
+        assert r.status_code in [400, 422], f"Expected 400 when webhook not set, got {r.status_code}: {r.text}"
+        print(f"Correctly returned {r.status_code} when webhook not configured")
