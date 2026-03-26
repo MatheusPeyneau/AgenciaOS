@@ -5,19 +5,20 @@ Plataforma SaaS de automação para agências de marketing digital brasileiras.
 Permite gerenciar toda a operação: Comercial, Entrega, Operacional, Conteúdo, Financeiro e RH.
 
 **Criado em:** Janeiro 2026
+**Última atualização:** Fevereiro 2026
 **Stack:** FastAPI + React + MongoDB + TailwindCSS + Shadcn/UI
 
 ---
 
 ## Decisões de Arquitetura
-- **Backend:** FastAPI (Python) + Motor (async MongoDB) — substituiu NestJS para compatibilidade com o ambiente
-- **Frontend:** React (CRA) + React Router v7 + Shadcn/UI — substituiu Next.js
-- **DB:** MongoDB — substituiu PostgreSQL/Prisma
+- **Backend:** FastAPI (Python) + Motor (async MongoDB)
+- **Frontend:** React (CRA) + React Router v7 + Shadcn/UI
+- **DB:** MongoDB — substituiu PostgreSQL/Prisma (ambiente sandbox)
 - **Auth:** JWT customizado + Google OAuth via Emergent Auth
 - **IA:** Emergent LLM Key (Anthropic Claude + Gemini) via `emergentintegrations`
 - **Kanban:** @dnd-kit/core para drag-and-drop
 - **Charts:** Recharts
-- **Tema:** Outfit (headings) + Plus Jakarta Sans (body), Light/Dark mode
+- **Integrações:** N8N (webhooks configuráveis)
 
 ---
 
@@ -29,32 +30,114 @@ Permite gerenciar toda a operação: Comercial, Entrega, Operacional, Conteúdo,
 
 ---
 
-## O Que Foi Implementado (v1.0 - Janeiro 2026)
+## O Que Foi Implementado
 
-### Backend (FastAPI)
+### v1.0 - Base (Janeiro 2026)
 - [x] Auth: Registro, Login (JWT), Google OAuth (Emergent), /me, Logout
 - [x] Leads CRUD: Criar, listar, editar, deletar leads com score e status
-- [x] Pipeline: 6 etapas pré-configuradas (Prospecção → Fechado Ganho), CRUD de deals
-- [x] Clientes CRUD: Gestão de clientes com MRR por cliente
+- [x] Pipeline: 6 etapas pré-configuradas (Prospecção → Fechado Perdido), CRUD de deals
+- [x] Clientes CRUD: Gestão de clientes com MRR por cliente, CPF/CNPJ, billing_type
 - [x] Dashboard KPIs: total_leads, pipeline_value, mrr, active_clients, conversion_rate, deals_by_stage
-- [x] IA endpoints (pré-configurados): /ai/qualify-lead e /ai/generate-content
+- [x] IA endpoints: /ai/qualify-lead e /ai/generate-content
 - [x] Webhook N8N: GET/PUT /api/settings/webhook + POST /api/settings/webhook/test
-- [x] Clientes: campos CPF/CNPJ, billing_type (BOLETO/PIX/Cartão/Transferência), due_date
-- [x] Disparo automático ao N8N ao criar cliente (payload compatível com Asaas/N8N)
+- [x] Disparo automático ao N8N ao criar cliente (payload compatível com Asaas)
 - [x] Seed automático das etapas do pipeline no startup
 
-### Frontend (React)
-- [x] Login page: Email/senha + Google OAuth, tab Registro
-- [x] AuthCallback: Processa session_id do OAuth e redireciona
-- [x] ProtectedRoute: Redireciona para /login se não autenticado
-- [x] Layout: Sidebar fixo + Header com user menu + theme toggle
-- [x] Dashboard: 4 KPI cards + gráfico de barras por etapa + leads recentes
-- [x] Módulo Comercial - Leads: Tabela completa, busca, filtros, modal criar/editar
-- [x] Módulo Comercial - Pipeline: Kanban com drag-and-drop (@dnd-kit)
-- [x] Clientes: Tabela, filtros, modal criar/editar, total MRR
-- [x] Stubs: Financeiro, Conteúdo, Operacional, RH (com "Em desenvolvimento")
-- [x] Configurações: Perfil, tema, integrações pré-configuradas
-- [x] Dark/Light mode completo
+### v1.1 - Prompt Avançado (Fevereiro 2026) ✅ TESTADO 100%
+- [x] **Feature 1:** Botão "Adicionar ao Pipeline" dentro do modal de criação de Lead (step 2 pós-criação)
+  - Endpoint: POST /api/leads/{lead_id}/pipeline
+- [x] **Feature 2:** Edição do Pipeline completa
+  - Drag-and-drop para reordenar etapas (PATCH /api/pipeline/stages/reorder)
+  - Renomear etapas (PATCH /api/pipeline/stages/{stage_id})
+  - Soft delete de deals com "Desfazer" (5s) via toast
+- [x] **Feature 3:** Card Operacional por Cliente
+  - Criado automaticamente ao cadastrar cliente
+  - Toggles: Meta Ads, Google Ads, Relatórios Auto, Alertas
+  - Endpoint: GET /api/operational, PATCH /api/operational/{client_id}
+  - Bug ObjectId serialization MongoDB corrigido
+- [x] **Feature 4:** Geração de Carrossel via N8N
+  - Webhook configurável em Configurações
+  - Envio de dados do cliente (nicho, notas) para N8N
+  - Exibição dos slides retornados com grid visual
+  - Endpoints: GET/PUT /api/settings/carousel-webhook, POST /api/content/carousel/generate
+  - Retry automático (3x com backoff exponencial)
+
+---
+
+## Arquitetura de Arquivos
+```
+/app/
+├── backend/
+│   ├── server.py              # FastAPI monolith (~918 linhas) - todos os endpoints
+│   ├── tests/
+│   │   └── test_agenciaos.py  # 13 testes pytest (100% pass)
+│   └── .env                   # MONGO_URL, DB_NAME, JWT_SECRET, EMERGENT_LLM_KEY
+├── frontend/
+│   ├── src/
+│   │   ├── components/        # Sidebar, Layout, Auth components
+│   │   ├── components/ui/     # Shadcn components
+│   │   ├── context/           # AuthContext
+│   │   ├── pages/
+│   │   │   ├── comercial/     # Leads.jsx, Pipeline.jsx
+│   │   │   ├── clientes/      # Clientes.jsx
+│   │   │   ├── operacional/   # Operacional.jsx
+│   │   │   ├── conteudo/      # Conteudo.jsx
+│   │   │   ├── financeiro/    # Financeiro.jsx (stub)
+│   │   │   ├── rh/            # RH.jsx (stub)
+│   │   │   ├── dashboard/     # Dashboard.jsx
+│   │   │   └── configuracoes/ # Configuracoes.jsx
+│   │   ├── App.js
+│   │   └── index.css
+│   └── package.json
+└── memory/
+    └── PRD.md
+```
+
+---
+
+## Endpoints da API
+
+### Auth
+- POST /api/auth/register
+- POST /api/auth/login
+- POST /api/auth/session (Google OAuth)
+- GET /api/auth/me
+- POST /api/auth/logout
+
+### Leads
+- GET/POST /api/leads
+- GET/PUT/DELETE /api/leads/{lead_id}
+- POST /api/leads/{lead_id}/pipeline  ← Feature 1
+
+### Pipeline
+- GET/POST /api/pipeline/stages
+- PATCH /api/pipeline/stages/reorder  ← Feature 2
+- PATCH /api/pipeline/stages/{stage_id}  ← Feature 2
+- GET/POST /api/pipeline/deals
+- PUT/DELETE /api/pipeline/deals/{deal_id}
+
+### Clientes
+- GET/POST /api/clients
+- GET/PUT/DELETE /api/clients/{client_id}
+
+### Operacional
+- GET /api/operational  ← Feature 3
+- PATCH /api/operational/{client_id}  ← Feature 3
+
+### Conteúdo
+- POST /api/content/carousel/generate  ← Feature 4
+
+### Configurações
+- GET/PUT /api/settings/webhook
+- POST /api/settings/webhook/test
+- GET/PUT /api/settings/carousel-webhook  ← Feature 4
+
+### Dashboard
+- GET /api/dashboard/kpis
+
+### IA
+- POST /api/ai/qualify-lead
+- POST /api/ai/generate-content
 
 ---
 
@@ -62,25 +145,29 @@ Permite gerenciar toda a operação: Comercial, Entrega, Operacional, Conteúdo,
 
 ### P0 - Crítico (próxima sprint)
 - [ ] Módulo Financeiro: faturas, cobranças recorrentes (Stripe)
-- [ ] Módulo de Conteúdo: calendário editorial + IA (geração de posts via Claude)
+- [ ] Calendário Editorial no módulo Conteúdo
 - [ ] Detalhes do Lead: página individual com histórico e timeline
 - [ ] Notificações in-app (leads novos, deals movidos)
 
 ### P1 - Importante
-- [ ] Módulo Operacional: integração Meta Ads / Google Ads via API
+- [ ] Meta Ads / Google Ads integração com dados reais
 - [ ] Módulo RH: cadastro de colaboradores + RBAC
-- [ ] Automações (Zapier-like): triggers + actions + workflows
+- [ ] Integração WhatsApp API
+- [ ] Integração Google Calendar
 - [ ] Relatórios mensais automatizados por cliente
 - [ ] Busca global (Command+K)
 - [ ] Paginação nas tabelas de Leads e Clientes
 
 ### P2 - Desejável
 - [ ] Onboarding wizard para novos usuários
-- [ ] Integração WhatsApp (via API)
-- [ ] Integração Google Calendar (agendamentos)
 - [ ] Score automático de leads via IA
 - [ ] Multi-workspace (multi-tenant por agência)
 - [ ] Exportação CSV / relatórios PDF
+- [ ] Publicação automática no Instagram
+
+### Refactoring Pendente
+- [ ] Separar server.py em routers modulares (leads, pipeline, clients, operational, content, settings, ai)
+- [ ] Adicionar paginação às listagens
 
 ---
 
@@ -98,31 +185,7 @@ Permite gerenciar toda a operação: Comercial, Entrega, Operacional, Conteúdo,
 
 ---
 
-## Endpoints da API
-
-### Auth
-- POST /api/auth/register
-- POST /api/auth/login
-- POST /api/auth/session (Google OAuth)
-- GET /api/auth/me
-- POST /api/auth/logout
-
-### Leads
-- GET/POST /api/leads
-- GET/PUT/DELETE /api/leads/{lead_id}
-
-### Pipeline
-- GET/POST /api/pipeline/stages
-- GET/POST /api/pipeline/deals
-- PUT/DELETE /api/pipeline/deals/{deal_id}
-
-### Clientes
-- GET/POST /api/clients
-- GET/PUT/DELETE /api/clients/{client_id}
-
-### Dashboard
-- GET /api/dashboard/kpis
-
-### IA (pré-configurado)
-- POST /api/ai/qualify-lead
-- POST /api/ai/generate-content
+## Notas Importantes
+- **MongoDB vs PostgreSQL**: Usuário solicitou PostgreSQL/Prisma mas o ambiente usa MongoDB. Manter MongoDB.
+- **Transações Atômicas**: MongoDB sem replica sets não suporta ACID. Usar bulk writes onde necessário.
+- **ObjectId**: Sempre excluir _id das respostas MongoDB. Usar {"_id": 0} em projections ou $project na agregação.

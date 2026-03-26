@@ -60,6 +60,9 @@ function ServiceTile({ service, active, toggling, onToggle }) {
     <button
       onClick={() => onToggle(service.key, !active)}
       disabled={toggling}
+      role="switch"
+      aria-checked={active}
+      aria-label={`${service.label}: ${active ? "ativo" : "inativo"}`}
       data-testid={`service-toggle-${service.key}`}
       className={cn(
         "flex flex-col items-start gap-2 p-3 rounded-lg border transition-all text-left w-full",
