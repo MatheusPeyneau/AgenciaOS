@@ -16,6 +16,7 @@ import Operacional from "@/pages/operacional/Operacional";
 import RH from "@/pages/rh/RH";
 import Configuracoes from "@/pages/configuracoes/Configuracoes";
 import "@/App.css";
+import { Toaster } from "@/components/ui/sonner";
 
 function AppRouter() {
   const location = useLocation();
@@ -59,6 +60,7 @@ function App() {
         <BrowserRouter>
           <AppRouter />
         </BrowserRouter>
+        <Toaster richColors position="top-right" />
       </AuthProvider>
     </ThemeProvider>
   );

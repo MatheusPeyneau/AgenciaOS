@@ -1,33 +1,20 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import axios from "axios";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, Search, Pencil, Trash2, Users } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Users, CheckCircle2, Kanban, ArrowRight } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -63,10 +50,19 @@ export default function Leads() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+
+  // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+
+  // Pipeline step (Feature 1)
+  const [showPipelineStep, setShowPipelineStep] = useState(false);
+  const [createdLeadId, setCreatedLeadId] = useState(null);
+  const [stages, setStages] = useState([]);
+  const [selectedStageId, setSelectedStageId] = useState("");
+  const [addingToPipeline, setAddingToPipeline] = useState(false);
 
   const fetchLeads = async () => {
     try {
@@ -78,27 +74,41 @@ export default function Leads() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchLeads(); }, []);
+  const fetchStages = async () => {
+    try {
+      const res = await axios.get(`${API}/pipeline/stages`, { headers: getAuthHeader() });
+      setStages(res.data);
+      if (res.data.length > 0) setSelectedStageId(res.data[0].stage_id);
+    } catch (err) {
+      console.error("Error fetching stages:", err);
+    }
+  };
+
+  useEffect(() => { fetchLeads(); fetchStages(); }, []);
 
   const openCreate = () => {
     setEditingLead(null);
     setForm(EMPTY_FORM);
+    setShowPipelineStep(false);
+    setCreatedLeadId(null);
     setModalOpen(true);
   };
 
   const openEdit = (lead) => {
     setEditingLead(lead);
+    setShowPipelineStep(false);
     setForm({
-      name: lead.name || "",
-      email: lead.email || "",
-      phone: lead.phone || "",
-      company: lead.company || "",
-      source: lead.source || "manual",
-      status: lead.status || "novo",
-      score: lead.score || 50,
-      notes: lead.notes || "",
+      name: lead.name || "", email: lead.email || "", phone: lead.phone || "",
+      company: lead.company || "", source: lead.source || "manual",
+      status: lead.status || "novo", score: lead.score || 50, notes: lead.notes || "",
     });
     setModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    setShowPipelineStep(false);
+    setCreatedLeadId(null);
   };
 
   const handleSave = async () => {
@@ -107,15 +117,42 @@ export default function Leads() {
     try {
       if (editingLead) {
         await axios.put(`${API}/leads/${editingLead.lead_id}`, form, { headers: getAuthHeader() });
+        await fetchLeads();
+        handleCloseModal();
+        toast.success("Lead atualizado com sucesso!");
       } else {
-        await axios.post(`${API}/leads`, form, { headers: getAuthHeader() });
+        const res = await axios.post(`${API}/leads`, form, { headers: getAuthHeader() });
+        setCreatedLeadId(res.data.lead_id);
+        await fetchLeads();
+        setShowPipelineStep(true);
       }
-      await fetchLeads();
-      setModalOpen(false);
     } catch (err) {
       console.error("Error saving lead:", err);
+      toast.error("Erro ao salvar lead.");
     }
     setSaving(false);
+  };
+
+  const handleAddToPipeline = async () => {
+    if (!selectedStageId || !createdLeadId) return;
+    setAddingToPipeline(true);
+    try {
+      await axios.post(
+        `${API}/leads/${createdLeadId}/pipeline`,
+        { stage_id: selectedStageId },
+        { headers: getAuthHeader() }
+      );
+      await fetchLeads();
+      handleCloseModal();
+      toast.success("Lead adicionado ao pipeline!", {
+        description: `Etapa: ${stages.find(s => s.stage_id === selectedStageId)?.name}`,
+        action: { label: "Ver Pipeline", onClick: () => (window.location.href = "/comercial/pipeline") },
+      });
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Erro ao adicionar ao pipeline";
+      toast.error(msg);
+    }
+    setAddingToPipeline(false);
   };
 
   const handleDelete = async (lead) => {
@@ -123,6 +160,7 @@ export default function Leads() {
     try {
       await axios.delete(`${API}/leads/${lead.lead_id}`, { headers: getAuthHeader() });
       setLeads((prev) => prev.filter((l) => l.lead_id !== lead.lead_id));
+      toast.success("Lead removido.");
     } catch (err) {
       console.error("Error deleting lead:", err);
     }
@@ -139,7 +177,6 @@ export default function Leads() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-heading font-bold tracking-tight">Leads</h1>
@@ -153,7 +190,6 @@ export default function Leads() {
         </Button>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-5">
         <div className="relative flex-1 max-w-sm">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -178,7 +214,6 @@ export default function Leads() {
         </Select>
       </div>
 
-      {/* Table */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-muted-foreground">
@@ -190,9 +225,7 @@ export default function Leads() {
             <Users size={36} className="mx-auto mb-3 text-muted-foreground opacity-40" />
             <p className="text-sm font-medium">Nenhum lead encontrado</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {search || statusFilter !== "all"
-                ? "Tente ajustar os filtros"
-                : "Clique em 'Novo Lead' para começar"}
+              {search || statusFilter !== "all" ? "Tente ajustar os filtros" : "Clique em 'Novo Lead' para começar"}
             </p>
           </div>
         ) : (
@@ -214,12 +247,8 @@ export default function Leads() {
                 return (
                   <TableRow key={lead.lead_id} data-testid={`lead-row-${lead.lead_id}`}>
                     <TableCell className="font-medium">{lead.name}</TableCell>
-                    <TableCell className="hidden md:table-cell text-muted-foreground text-sm">
-                      {lead.email || "—"}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-sm">
-                      {lead.company || "—"}
-                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-muted-foreground text-sm">{lead.email || "—"}</TableCell>
+                    <TableCell className="hidden lg:table-cell text-sm">{lead.company || "—"}</TableCell>
                     <TableCell className="hidden md:table-cell text-sm text-muted-foreground capitalize">
                       {SOURCES.find((s) => s.value === lead.source)?.label || lead.source}
                     </TableCell>
@@ -232,10 +261,7 @@ export default function Leads() {
                       <div className="flex items-center justify-end gap-2">
                         <span className="text-sm font-medium">{lead.score}</span>
                         <div className="w-12 bg-muted rounded-full h-1 hidden sm:block">
-                          <div
-                            className="bg-primary h-1 rounded-full"
-                            style={{ width: `${lead.score || 0}%` }}
-                          />
+                          <div className="bg-primary h-1 rounded-full" style={{ width: `${lead.score || 0}%` }} />
                         </div>
                       </div>
                     </TableCell>
@@ -265,123 +291,112 @@ export default function Leads() {
         )}
       </div>
 
-      {/* Create/Edit Modal */}
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+      {/* Lead Modal (step 1: form | step 2: add to pipeline) */}
+      <Dialog open={modalOpen} onOpenChange={handleCloseModal}>
         <DialogContent className="sm:max-w-lg" data-testid="lead-modal">
           <DialogHeader>
             <DialogTitle className="font-heading">
-              {editingLead ? "Editar Lead" : "Novo Lead"}
+              {showPipelineStep ? "Adicionar ao Pipeline" : editingLead ? "Editar Lead" : "Novo Lead"}
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
-            <div className="sm:col-span-2 space-y-1.5">
-              <Label className="text-sm font-medium">Nome *</Label>
-              <Input
-                placeholder="Nome do lead"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                data-testid="lead-name-input"
-              />
+          {showPipelineStep ? (
+            /* ——— STEP 2: Pipeline ——— */
+            <div className="py-2 space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
+                <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Lead criado com sucesso!</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Deseja mover este lead para uma etapa do pipeline?</p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Etapa do Pipeline</Label>
+                <Select value={selectedStageId} onValueChange={setSelectedStageId}>
+                  <SelectTrigger data-testid="pipeline-stage-select">
+                    <SelectValue placeholder="Selecionar etapa..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {stages.map((s) => (
+                      <SelectItem key={s.stage_id} value={s.stage_id}>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+                          {s.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Email</Label>
-              <Input
-                type="email"
-                placeholder="email@exemplo.com"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                data-testid="lead-email-input"
-              />
+          ) : (
+            /* ——— STEP 1: Lead Form ——— */
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
+              <div className="sm:col-span-2 space-y-1.5">
+                <Label className="text-sm font-medium">Nome *</Label>
+                <Input placeholder="Nome do lead" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="lead-name-input" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Email</Label>
+                <Input type="email" placeholder="email@exemplo.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="lead-email-input" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Telefone</Label>
+                <Input placeholder="(11) 99999-9999" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} data-testid="lead-phone-input" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Empresa</Label>
+                <Input placeholder="Nome da empresa" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} data-testid="lead-company-input" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Origem</Label>
+                <Select value={form.source} onValueChange={(v) => setForm({ ...form, source: v })}>
+                  <SelectTrigger data-testid="lead-source-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>{SOURCES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Status</Label>
+                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                  <SelectTrigger data-testid="lead-status-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>{Object.entries(STATUS_CONFIG).map(([k, c]) => <SelectItem key={k} value={k}>{c.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Score (0-100)</Label>
+                <Input type="number" min={0} max={100} value={form.score} onChange={(e) => setForm({ ...form, score: parseInt(e.target.value) || 0 })} data-testid="lead-score-input" />
+              </div>
+              <div className="sm:col-span-2 space-y-1.5">
+                <Label className="text-sm font-medium">Notas</Label>
+                <Textarea placeholder="Anotações sobre o lead..." value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} data-testid="lead-notes-input" />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Telefone</Label>
-              <Input
-                placeholder="(11) 99999-9999"
-                value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                data-testid="lead-phone-input"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Empresa</Label>
-              <Input
-                placeholder="Nome da empresa"
-                value={form.company}
-                onChange={(e) => setForm({ ...form, company: e.target.value })}
-                data-testid="lead-company-input"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Origem</Label>
-              <Select
-                value={form.source}
-                onValueChange={(v) => setForm({ ...form, source: v })}
-              >
-                <SelectTrigger data-testid="lead-source-select">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SOURCES.map((s) => (
-                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Status</Label>
-              <Select
-                value={form.status}
-                onValueChange={(v) => setForm({ ...form, status: v })}
-              >
-                <SelectTrigger data-testid="lead-status-select">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
-                    <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Score (0-100)</Label>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={form.score}
-                onChange={(e) => setForm({ ...form, score: parseInt(e.target.value) || 0 })}
-                data-testid="lead-score-input"
-              />
-            </div>
-            <div className="sm:col-span-2 space-y-1.5">
-              <Label className="text-sm font-medium">Notas</Label>
-              <Textarea
-                placeholder="Anotações sobre o lead..."
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                rows={3}
-                data-testid="lead-notes-input"
-              />
-            </div>
-          </div>
+          )}
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setModalOpen(false)}
-              data-testid="lead-modal-cancel"
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={saving || !form.name.trim()}
-              data-testid="lead-modal-save"
-            >
-              {saving ? "Salvando..." : editingLead ? "Salvar alterações" : "Criar lead"}
-            </Button>
+            {showPipelineStep ? (
+              <>
+                <Button variant="outline" onClick={handleCloseModal} data-testid="pipeline-step-skip">Pular</Button>
+                <Button
+                  onClick={handleAddToPipeline}
+                  disabled={addingToPipeline || !selectedStageId}
+                  data-testid="pipeline-step-add"
+                >
+                  {addingToPipeline ? "Adicionando..." : (
+                    <><Kanban size={14} className="mr-2" />Adicionar ao Pipeline</>
+                  )}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={handleCloseModal} data-testid="lead-modal-cancel">Cancelar</Button>
+                <Button onClick={handleSave} disabled={saving || !form.name.trim()} data-testid="lead-modal-save">
+                  {saving ? "Salvando..." : editingLead ? "Salvar alterações" : "Criar lead"}
+                  {!saving && !editingLead && <ArrowRight size={14} className="ml-2" />}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

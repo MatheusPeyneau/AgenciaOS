@@ -6,6 +6,7 @@ import os
 import logging
 import uuid
 import httpx
+import asyncio
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -157,6 +158,33 @@ class WebhookSettings(BaseModel):
 class AIRequest(BaseModel):
     prompt: str
     context: Optional[Dict[str, Any]] = None
+
+class AddToPipelineRequest(BaseModel):
+    stage_id: str
+
+class StageUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+class StageReorderItem(BaseModel):
+    stage_id: str
+    order: int
+
+class StageReorderRequest(BaseModel):
+    stages: List[StageReorderItem]
+
+class OperationalCardUpdate(BaseModel):
+    meta_ads: Optional[bool] = None
+    google_ads: Optional[bool] = None
+    auto_reports: Optional[bool] = None
+    alerts: Optional[bool] = None
+
+class CarouselWebhookSettings(BaseModel):
+    webhook_url: str
+    enabled: bool = True
+
+class CarouselRequest(BaseModel):
+    client_id: str
 
 
 # ============= AUTH ENDPOINTS =============
@@ -332,7 +360,8 @@ async def create_stage(body: StageCreate, current_user: dict = Depends(get_curre
 
 @api_router.get("/pipeline/deals")
 async def list_deals(current_user: dict = Depends(get_current_user)):
-    deals = await db.deals.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    filter_q = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    deals = await db.deals.find(filter_q, {"_id": 0}).sort("created_at", -1).to_list(500)
     return deals
 
 
@@ -363,10 +392,14 @@ async def update_deal(deal_id: str, body: DealUpdate, current_user: dict = Depen
 
 @api_router.delete("/pipeline/deals/{deal_id}")
 async def delete_deal(deal_id: str, current_user: dict = Depends(get_current_user)):
-    result = await db.deals.delete_one({"deal_id": deal_id})
-    if result.deleted_count == 0:
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.deals.update_one(
+        {"deal_id": deal_id},
+        {"$set": {"deleted_at": now, "updated_at": now}},
+    )
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Deal não encontrado")
-    return {"message": "Deal removido com sucesso"}
+    return {"deleted_at": now, "deal_id": deal_id}
 
 
 # ============= WEBHOOK HELPER =============
@@ -402,6 +435,31 @@ async def send_n8n_webhook(client_doc: dict):
         logger.error(f"N8N webhook error: {exc}")  # never breaks client creation
 
 
+async def call_n8n_with_retry(url: str, payload: dict, retries: int = 3, timeout: float = 30.0):
+    """Call N8N webhook with exponential backoff retry."""
+    last_error = "desconhecido"
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json=payload, timeout=timeout)
+                if resp.status_code < 500:
+                    try:
+                        return resp.json()
+                    except Exception:
+                        return {"raw_response": resp.text, "status_code": resp.status_code}
+            last_error = f"HTTP {resp.status_code}"
+        except httpx.TimeoutException:
+            last_error = "timeout (30s)"
+        except httpx.RequestError as exc:
+            last_error = str(exc)
+        if attempt < retries - 1:
+            await asyncio.sleep((attempt + 1) * 1.5)
+    raise HTTPException(
+        status_code=504,
+        detail=f"N8N não respondeu após {retries} tentativas. Erro: {last_error}",
+    )
+
+
 # ============= CLIENTS ENDPOINTS =============
 
 @api_router.get("/clients")
@@ -422,8 +480,19 @@ async def create_client(body: ClientCreate, current_user: dict = Depends(get_cur
         "updated_at": now,
     }
     await db.clients.insert_one(client_doc)
+    # Auto-create operational card (atomic within same request)
+    op_card_id = f"opcard_{uuid.uuid4().hex[:10]}"
+    await db.operational_cards.insert_one({
+        "op_card_id": op_card_id,
+        "client_id": client_id,
+        "meta_ads": False,
+        "google_ads": False,
+        "auto_reports": False,
+        "alerts": False,
+        "created_at": now,
+        "updated_at": now,
+    })
     result = {k: v for k, v in client_doc.items() if k != "_id"}
-    # Fire N8N webhook asynchronously (failure won't break the response)
     await send_n8n_webhook(client_doc)
     return result
 
@@ -508,6 +577,195 @@ async def test_webhook(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=408, detail="Timeout: o N8N não respondeu em 10s")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erro ao enviar: {str(exc)}")
+
+
+# ============= FEATURE 1: LEAD → PIPELINE =============
+
+@api_router.post("/leads/{lead_id}/pipeline")
+async def add_lead_to_pipeline(lead_id: str, body: AddToPipelineRequest, current_user: dict = Depends(get_current_user)):
+    lead = await db.leads.find_one({"lead_id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead não encontrado")
+
+    # Check if already in active pipeline
+    active_filter = {
+        "lead_id": lead_id,
+        "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}],
+    }
+    existing = await db.deals.find_one(active_filter, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Lead já está em um pipeline ativo")
+
+    stage = await db.pipeline_stages.find_one({"stage_id": body.stage_id}, {"_id": 0})
+    if not stage:
+        raise HTTPException(status_code=404, detail="Etapa não encontrada")
+
+    deal_id = f"deal_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    deal_doc = {
+        "deal_id": deal_id,
+        "title": lead["name"],
+        "value": 0,
+        "stage_id": body.stage_id,
+        "lead_id": lead_id,
+        "contact_name": lead["name"],
+        "company": lead.get("company", ""),
+        "probability": 50,
+        "notes": "",
+        "user_id": current_user["user_id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.deals.insert_one(deal_doc)
+    await db.leads.update_one(
+        {"lead_id": lead_id},
+        {"$set": {"status": "em_atendimento", "updated_at": now}},
+    )
+    result = {k: v for k, v in deal_doc.items() if k != "_id"}
+    result["stage"] = stage
+    return result
+
+
+# ============= FEATURE 2: STAGE MANAGEMENT =============
+
+@api_router.patch("/pipeline/stages/reorder")
+async def reorder_stages(body: StageReorderRequest, current_user: dict = Depends(get_current_user)):
+    for item in body.stages:
+        await db.pipeline_stages.update_one(
+            {"stage_id": item.stage_id},
+            {"$set": {"order": item.order}},
+        )
+    return {"message": "Etapas reordenadas com sucesso"}
+
+
+@api_router.patch("/pipeline/stages/{stage_id}")
+async def update_stage(stage_id: str, body: StageUpdate, current_user: dict = Depends(get_current_user)):
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    result = await db.pipeline_stages.update_one({"stage_id": stage_id}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Etapa não encontrada")
+    return await db.pipeline_stages.find_one({"stage_id": stage_id}, {"_id": 0})
+
+
+# ============= FEATURE 3: OPERATIONAL CARDS =============
+
+@api_router.get("/operational")
+async def list_operational(current_user: dict = Depends(get_current_user)):
+    pipeline_q = [
+        {"$project": {"_id": 0}},
+        {"$lookup": {
+            "from": "clients",
+            "localField": "client_id",
+            "foreignField": "client_id",
+            "as": "client_list",
+        }},
+        {"$addFields": {
+            "client": {"$ifNull": [{"$first": "$client_list"}, {}]}
+        }},
+        {"$project": {
+            "client_list": 0,
+            "client._id": 0,
+        }},
+    ]
+    result = await db.operational_cards.aggregate(pipeline_q).to_list(500)
+    return result
+
+
+@api_router.patch("/operational/{client_id}")
+async def update_operational(client_id: str, body: OperationalCardUpdate, current_user: dict = Depends(get_current_user)):
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.operational_cards.update_one(
+        {"client_id": client_id},
+        {"$set": update_data},
+        upsert=True,
+    )
+    return await db.operational_cards.find_one({"client_id": client_id}, {"_id": 0})
+
+
+# ============= FEATURE 4: CAROUSEL GENERATION =============
+
+@api_router.get("/settings/carousel-webhook")
+async def get_carousel_webhook(current_user: dict = Depends(get_current_user)):
+    settings = await db.settings.find_one({"setting_id": "webhook_carousel"}, {"_id": 0})
+    if not settings:
+        return {"webhook_url": "", "enabled": False}
+    return {"webhook_url": settings.get("webhook_url", ""), "enabled": settings.get("enabled", False)}
+
+
+@api_router.put("/settings/carousel-webhook")
+async def save_carousel_webhook(body: CarouselWebhookSettings, current_user: dict = Depends(get_current_user)):
+    await db.settings.update_one(
+        {"setting_id": "webhook_carousel"},
+        {"$set": {
+            "setting_id": "webhook_carousel",
+            "webhook_url": body.webhook_url,
+            "enabled": body.enabled,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"message": "Webhook de carrossel salvo", "webhook_url": body.webhook_url, "enabled": body.enabled}
+
+
+@api_router.post("/content/carousel/generate")
+async def generate_carousel(body: CarouselRequest, current_user: dict = Depends(get_current_user)):
+    client = await db.clients.find_one({"client_id": body.client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    settings = await db.settings.find_one({"setting_id": "webhook_carousel"}, {"_id": 0})
+    if not settings or not settings.get("webhook_url"):
+        raise HTTPException(
+            status_code=400,
+            detail="Webhook de carrossel não configurado. Acesse Configurações > N8N > Webhook de Carrossel.",
+        )
+    if not settings.get("enabled"):
+        raise HTTPException(status_code=400, detail="Webhook de carrossel está desativado nas configurações.")
+
+    if not client.get("notes", "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Cliente sem notas cadastradas. Adicione informações do nicho nas Notas do cliente.",
+        )
+
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+    payload = {
+        "jobId": job_id,
+        "clientId": client["client_id"],
+        "clientName": client["name"],
+        "niche": client.get("company", ""),
+        "notes": client.get("notes", ""),
+        "email": client.get("email", ""),
+        "requestedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+    log_id = f"log_{uuid.uuid4().hex[:10]}"
+    await db.content_generation_logs.insert_one({
+        "log_id": log_id,
+        "job_id": job_id,
+        "client_id": body.client_id,
+        "status": "pending",
+        "payload": payload,
+        "response": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    try:
+        result = await call_n8n_with_retry(settings["webhook_url"], payload)
+        await db.content_generation_logs.update_one(
+            {"job_id": job_id},
+            {"$set": {"status": "success", "response": result}},
+        )
+        return {"job_id": job_id, "status": "success", "data": result}
+    except HTTPException as exc:
+        await db.content_generation_logs.update_one(
+            {"job_id": job_id},
+            {"$set": {"status": "failed", "response": {"error": exc.detail}}},
+        )
+        raise
 
 
 # ============= DASHBOARD ENDPOINTS =============
