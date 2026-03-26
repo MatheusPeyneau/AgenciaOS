@@ -129,9 +129,12 @@ class ClientCreate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
+    cpf_cnpj: Optional[str] = None
     status: str = "ativo"
     monthly_value: float = 0
+    billing_type: str = "BOLETO"
     start_date: Optional[str] = None
+    due_date: Optional[str] = None
     notes: Optional[str] = None
 
 class ClientUpdate(BaseModel):
@@ -139,10 +142,17 @@ class ClientUpdate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
+    cpf_cnpj: Optional[str] = None
     status: Optional[str] = None
     monthly_value: Optional[float] = None
+    billing_type: Optional[str] = None
     start_date: Optional[str] = None
+    due_date: Optional[str] = None
     notes: Optional[str] = None
+
+class WebhookSettings(BaseModel):
+    webhook_url: str
+    enabled: bool = True
 
 class AIRequest(BaseModel):
     prompt: str
@@ -359,6 +369,39 @@ async def delete_deal(deal_id: str, current_user: dict = Depends(get_current_use
     return {"message": "Deal removido com sucesso"}
 
 
+# ============= WEBHOOK HELPER =============
+
+async def send_n8n_webhook(client_doc: dict):
+    """Fire N8N webhook when a new client is created, if configured and enabled."""
+    try:
+        settings = await db.settings.find_one({"setting_id": "webhook_n8n"}, {"_id": 0})
+        if not settings or not settings.get("enabled") or not settings.get("webhook_url"):
+            return
+        # Compute due_date: use client value or default to 1st day of next month
+        if client_doc.get("due_date"):
+            due_date_str = client_doc["due_date"]
+        else:
+            now = datetime.now(timezone.utc)
+            month = now.month % 12 + 1
+            year = now.year + (1 if now.month == 12 else 0)
+            due_date_str = f"{year}-{month:02d}-01"
+
+        payload = {
+            "name": client_doc.get("name", ""),
+            "cpfCnpj": client_doc.get("cpf_cnpj", ""),
+            "email": client_doc.get("email", ""),
+            "mobilePhone": client_doc.get("phone", ""),
+            "billingType": client_doc.get("billing_type", "BOLETO"),
+            "value": client_doc.get("monthly_value", 0),
+            "dueDate": due_date_str,
+        }
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(settings["webhook_url"], json=payload, timeout=10.0)
+            logger.info(f"N8N webhook dispatched → {resp.status_code}")
+    except Exception as exc:
+        logger.error(f"N8N webhook error: {exc}")  # never breaks client creation
+
+
 # ============= CLIENTS ENDPOINTS =============
 
 @api_router.get("/clients")
@@ -379,7 +422,10 @@ async def create_client(body: ClientCreate, current_user: dict = Depends(get_cur
         "updated_at": now,
     }
     await db.clients.insert_one(client_doc)
-    return {k: v for k, v in client_doc.items() if k != "_id"}
+    result = {k: v for k, v in client_doc.items() if k != "_id"}
+    # Fire N8N webhook asynchronously (failure won't break the response)
+    await send_n8n_webhook(client_doc)
+    return result
 
 
 @api_router.get("/clients/{client_id}")
@@ -406,6 +452,62 @@ async def delete_client(client_id: str, current_user: dict = Depends(get_current
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
     return {"message": "Cliente removido com sucesso"}
+
+
+# ============= WEBHOOK SETTINGS ENDPOINTS =============
+
+@api_router.get("/settings/webhook")
+async def get_webhook_settings(current_user: dict = Depends(get_current_user)):
+    settings = await db.settings.find_one({"setting_id": "webhook_n8n"}, {"_id": 0})
+    if not settings:
+        return {"webhook_url": "", "enabled": False}
+    return {"webhook_url": settings.get("webhook_url", ""), "enabled": settings.get("enabled", False)}
+
+
+@api_router.put("/settings/webhook")
+async def save_webhook_settings(body: WebhookSettings, current_user: dict = Depends(get_current_user)):
+    await db.settings.update_one(
+        {"setting_id": "webhook_n8n"},
+        {
+            "$set": {
+                "setting_id": "webhook_n8n",
+                "webhook_url": body.webhook_url,
+                "enabled": body.enabled,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+        upsert=True,
+    )
+    return {"message": "Webhook salvo com sucesso", "webhook_url": body.webhook_url, "enabled": body.enabled}
+
+
+@api_router.post("/settings/webhook/test")
+async def test_webhook(current_user: dict = Depends(get_current_user)):
+    """Send a test payload to the configured N8N webhook."""
+    settings = await db.settings.find_one({"setting_id": "webhook_n8n"}, {"_id": 0})
+    if not settings or not settings.get("webhook_url"):
+        raise HTTPException(status_code=400, detail="Webhook não configurado. Salve a URL primeiro.")
+
+    now = datetime.now(timezone.utc)
+    month = now.month % 12 + 1
+    year = now.year + (1 if now.month == 12 else 0)
+    test_payload = {
+        "name": "Cliente Teste AgênciaOS",
+        "cpfCnpj": "00000000000000",
+        "email": "teste@agenciaos.com",
+        "mobilePhone": "11999999999",
+        "billingType": "BOLETO",
+        "value": 500.00,
+        "dueDate": f"{year}-{month:02d}-01",
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(settings["webhook_url"], json=test_payload, timeout=10.0)
+            return {"status": "success", "status_code": resp.status_code, "message": f"Payload enviado com sucesso (HTTP {resp.status_code})"}
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=408, detail="Timeout: o N8N não respondeu em 10s")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erro ao enviar: {str(exc)}")
 
 
 # ============= DASHBOARD ENDPOINTS =============

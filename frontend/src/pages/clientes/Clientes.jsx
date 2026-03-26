@@ -45,9 +45,17 @@ const STATUS_CONFIG = {
   cancelado: { label: "Cancelado", className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" },
 };
 
+const BILLING_TYPES = [
+  { value: "BOLETO", label: "Boleto" },
+  { value: "PIX", label: "PIX" },
+  { value: "CREDIT_CARD", label: "Cartão de Crédito" },
+  { value: "TRANSFER", label: "Transferência" },
+];
+
 const EMPTY_FORM = {
   name: "", email: "", phone: "", company: "",
-  status: "ativo", monthly_value: 0, start_date: "", notes: "",
+  cpf_cnpj: "", status: "ativo", monthly_value: 0,
+  billing_type: "BOLETO", start_date: "", due_date: "", notes: "",
 };
 
 export default function Clientes() {
@@ -85,9 +93,12 @@ export default function Clientes() {
       email: client.email || "",
       phone: client.phone || "",
       company: client.company || "",
+      cpf_cnpj: client.cpf_cnpj || "",
       status: client.status || "ativo",
       monthly_value: client.monthly_value || 0,
+      billing_type: client.billing_type || "BOLETO",
       start_date: client.start_date || "",
+      due_date: client.due_date || "",
       notes: client.notes || "",
     });
     setModalOpen(true);
@@ -298,6 +309,15 @@ export default function Clientes() {
               />
             </div>
             <div className="space-y-1.5">
+              <Label className="text-sm font-medium">CPF / CNPJ</Label>
+              <Input
+                placeholder="00.000.000/0001-00"
+                value={form.cpf_cnpj}
+                onChange={(e) => setForm({ ...form, cpf_cnpj: e.target.value })}
+                data-testid="client-cpfcnpj-input"
+              />
+            </div>
+            <div className="space-y-1.5">
               <Label className="text-sm font-medium">Status</Label>
               <Select
                 value={form.status}
@@ -327,12 +347,37 @@ export default function Clientes() {
               />
             </div>
             <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Tipo de Cobrança</Label>
+              <Select
+                value={form.billing_type}
+                onValueChange={(v) => setForm({ ...form, billing_type: v })}
+              >
+                <SelectTrigger data-testid="client-billing-type-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BILLING_TYPES.map((bt) => (
+                    <SelectItem key={bt.value} value={bt.value}>{bt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
               <Label className="text-sm font-medium">Início do contrato</Label>
               <Input
                 type="date"
                 value={form.start_date}
                 onChange={(e) => setForm({ ...form, start_date: e.target.value })}
                 data-testid="client-start-date-input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Vencimento da fatura</Label>
+              <Input
+                type="date"
+                value={form.due_date}
+                onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+                data-testid="client-due-date-input"
               />
             </div>
             <div className="sm:col-span-2 space-y-1.5">

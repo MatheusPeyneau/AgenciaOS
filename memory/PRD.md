@@ -38,6 +38,9 @@ Permite gerenciar toda a operação: Comercial, Entrega, Operacional, Conteúdo,
 - [x] Clientes CRUD: Gestão de clientes com MRR por cliente
 - [x] Dashboard KPIs: total_leads, pipeline_value, mrr, active_clients, conversion_rate, deals_by_stage
 - [x] IA endpoints (pré-configurados): /ai/qualify-lead e /ai/generate-content
+- [x] Webhook N8N: GET/PUT /api/settings/webhook + POST /api/settings/webhook/test
+- [x] Clientes: campos CPF/CNPJ, billing_type (BOLETO/PIX/Cartão/Transferência), due_date
+- [x] Disparo automático ao N8N ao criar cliente (payload compatível com Asaas/N8N)
 - [x] Seed automático das etapas do pipeline no startup
 
 ### Frontend (React)
