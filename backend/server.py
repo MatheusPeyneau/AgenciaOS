@@ -187,6 +187,67 @@ class CarouselRequest(BaseModel):
     client_id: str
 
 
+# ---- Collaborators ----
+
+class CollaboratorCreate(BaseModel):
+    name: str
+    email: Optional[str] = None
+    role: str = "analyst"
+    avatar_url: Optional[str] = None
+
+class CollaboratorUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class ClientCollaboratorAssign(BaseModel):
+    collaborator_id: str
+    role: str = "responsible"
+
+# ---- Operational Tasks ----
+
+class TaskCreate(BaseModel):
+    title: str
+    status: str = "TO_DO"
+    priority: str = "NORMAL"
+    assignee_id: Optional[str] = None
+    start_date: Optional[str] = None
+    due_date: Optional[str] = None
+    estimated_minutes: Optional[int] = None
+    is_recurring: bool = False
+    recurring_rule: Optional[str] = None
+    parent_task_id: Optional[str] = None
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    assignee_id: Optional[str] = None
+    start_date: Optional[str] = None
+    due_date: Optional[str] = None
+    estimated_minutes: Optional[int] = None
+    is_recurring: Optional[bool] = None
+    recurring_rule: Optional[str] = None
+    position: Optional[int] = None
+
+class TaskReorderBatchItem(BaseModel):
+    task_id: str
+    position: int
+
+class TaskBatchReorderRequest(BaseModel):
+    tasks: List[TaskReorderBatchItem]
+
+class TimeLogCreate(BaseModel):
+    minutes: int
+    note: Optional[str] = None
+
+class TaskCommentCreate(BaseModel):
+    content: str
+    author_name: Optional[str] = None
+
+
 # ============= AUTH ENDPOINTS =============
 
 @api_router.post("/auth/register")
@@ -766,6 +827,373 @@ async def generate_carousel(body: CarouselRequest, current_user: dict = Depends(
             {"$set": {"status": "failed", "response": {"error": exc.detail}}},
         )
         raise
+
+
+# ============= COLLABORATORS =============
+
+@api_router.get("/collaborators")
+async def list_collaborators(role: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    q: Dict[str, Any] = {"is_active": True}
+    if role:
+        q["role"] = role
+    collaborators = await db.collaborators.find(q, {"_id": 0}).sort("name", 1).to_list(200)
+    return collaborators
+
+
+@api_router.post("/collaborators")
+async def create_collaborator(body: CollaboratorCreate, current_user: dict = Depends(get_current_user)):
+    collab_id = f"collab_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {"collaborator_id": collab_id, **body.model_dump(), "is_active": True, "created_at": now}
+    await db.collaborators.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.patch("/collaborators/{collaborator_id}")
+async def update_collaborator(collaborator_id: str, body: CollaboratorUpdate, current_user: dict = Depends(get_current_user)):
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    result = await db.collaborators.update_one({"collaborator_id": collaborator_id}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Colaborador não encontrado")
+    return await db.collaborators.find_one({"collaborator_id": collaborator_id}, {"_id": 0})
+
+
+@api_router.delete("/collaborators/{collaborator_id}")
+async def deactivate_collaborator(collaborator_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.collaborators.update_one(
+        {"collaborator_id": collaborator_id}, {"$set": {"is_active": False}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Colaborador não encontrado")
+    return {"message": "Colaborador desativado"}
+
+
+# ============= CLIENT-COLLABORATOR ASSIGNMENTS =============
+
+@api_router.get("/clients/{client_id}/collaborators")
+async def get_client_collaborators(client_id: str, current_user: dict = Depends(get_current_user)):
+    pipeline = [
+        {"$match": {"client_id": client_id}},
+        {"$project": {"_id": 0}},
+        {"$lookup": {"from": "collaborators", "localField": "collaborator_id", "foreignField": "collaborator_id", "as": "collab_list"}},
+        {"$addFields": {"collaborator": {"$ifNull": [{"$first": "$collab_list"}, {}]}}},
+        {"$project": {"collab_list": 0, "collaborator._id": 0}},
+    ]
+    return await db.client_collaborators.aggregate(pipeline).to_list(50)
+
+
+@api_router.post("/clients/{client_id}/collaborators")
+async def assign_collaborator_to_client(client_id: str, body: ClientCollaboratorAssign, current_user: dict = Depends(get_current_user)):
+    client = await db.clients.find_one({"client_id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    collab = await db.collaborators.find_one({"collaborator_id": body.collaborator_id, "is_active": True}, {"_id": 0})
+    if not collab:
+        raise HTTPException(status_code=404, detail="Colaborador não encontrado")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.client_collaborators.update_one(
+        {"client_id": client_id, "collaborator_id": body.collaborator_id},
+        {"$set": {"client_id": client_id, "collaborator_id": body.collaborator_id, "role": body.role, "assigned_at": now}},
+        upsert=True,
+    )
+    return {"client_id": client_id, "collaborator_id": body.collaborator_id, "role": body.role, "collaborator": collab}
+
+
+@api_router.delete("/clients/{client_id}/collaborators/{collaborator_id}")
+async def remove_collaborator_from_client(client_id: str, collaborator_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.client_collaborators.delete_one({"client_id": client_id, "collaborator_id": collaborator_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Atribuição não encontrada")
+    return {"message": "Atribuição removida"}
+
+
+# ============= OPERATIONAL TASKS =============
+
+def _active_task_filter():
+    return {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+
+
+@api_router.post("/clients/{client_id}/tasks/apply-template")
+async def apply_task_template(client_id: str, current_user: dict = Depends(get_current_user)):
+    client = await db.clients.find_one({"client_id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    existing = await db.operational_tasks.count_documents({"client_id": client_id, **_active_task_filter()})
+    if existing > 0:
+        raise HTTPException(status_code=400, detail="Este cliente já possui tarefas. Limpe antes de aplicar o template.")
+
+    DEFAULT_TEMPLATE = [
+        {"title": "Criar grupo de Whatsapp com o Cliente", "priority": "URGENT", "estimated_minutes": 2},
+        {"title": "Dados para Contrato", "priority": "URGENT", "estimated_minutes": 5},
+        {"title": "Elaborar e Assinar Contrato", "priority": "HIGH", "estimated_minutes": 10},
+        {"title": "Cadastrar Asaas", "priority": "NORMAL", "estimated_minutes": 5},
+        {"title": "Agendar Cobranças", "priority": "NORMAL", "estimated_minutes": 7},
+        {"title": "Briefing", "priority": "HIGH", "estimated_minutes": 40},
+        {"title": "Estruturação de Campanhas", "priority": "HIGH", "estimated_minutes": 80},
+        {"title": "Validação de Campanhas", "priority": "HIGH", "estimated_minutes": 8},
+        {"title": "Enviar Campanhas para Aprovação", "priority": "HIGH", "estimated_minutes": 8},
+        {"title": "Follow-up", "priority": "NORMAL", "estimated_minutes": 15},
+        {"title": "Otimizações", "priority": "HIGH", "estimated_minutes": 30},
+        {"title": "Otimizações/Verificações semanais", "priority": "HIGH", "estimated_minutes": 20, "is_recurring": True, "recurring_rule": "weekly"},
+        {"title": "Envio de Mensagem no grupo para Relatório", "priority": "NORMAL", "estimated_minutes": 2, "is_recurring": True, "recurring_rule": "monthly"},
+        {"title": "DIÁRIO", "priority": "NORMAL", "estimated_minutes": 20, "is_recurring": True, "recurring_rule": "daily"},
+    ]
+    now = datetime.now(timezone.utc).isoformat()
+    docs = []
+    for i, tmpl in enumerate(DEFAULT_TEMPLATE):
+        task_id = f"task_{uuid.uuid4().hex[:10]}"
+        docs.append({
+            "task_id": task_id, "client_id": client_id, "parent_task_id": None,
+            "title": tmpl["title"], "status": "TO_DO", "priority": tmpl["priority"],
+            "assignee_id": None, "start_date": None, "due_date": None,
+            "estimated_minutes": tmpl.get("estimated_minutes"), "tracked_minutes": 0,
+            "position": i, "is_recurring": tmpl.get("is_recurring", False),
+            "recurring_rule": tmpl.get("recurring_rule"), "comment_count": 0,
+            "deleted_at": None, "created_at": now, "updated_at": now,
+        })
+    await db.operational_tasks.insert_many(docs)
+    return [{k: v for k, v in d.items() if k != "_id"} for d in docs]
+
+
+@api_router.get("/clients/{client_id}/tasks")
+async def list_client_tasks(
+    client_id: str,
+    status: Optional[str] = None,
+    assignee_id: Optional[str] = None,
+    priority: Optional[str] = None,
+    parent_task_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    client = await db.clients.find_one({"client_id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    q_parts: List[Dict] = [{"client_id": client_id}, _active_task_filter()]
+    if parent_task_id is not None:
+        q_parts.append({"parent_task_id": parent_task_id})
+    else:
+        q_parts.append({"$or": [{"parent_task_id": {"$exists": False}}, {"parent_task_id": None}]})
+    if status:
+        q_parts.append({"status": status})
+    if assignee_id:
+        q_parts.append({"assignee_id": assignee_id})
+    if priority:
+        q_parts.append({"priority": priority})
+
+    tasks = await db.operational_tasks.find({"$and": q_parts}, {"_id": 0}).sort("position", 1).to_list(500)
+    if not tasks:
+        return []
+
+    assignee_ids = list({t["assignee_id"] for t in tasks if t.get("assignee_id")})
+    collab_map: Dict[str, Any] = {}
+    if assignee_ids:
+        collabs = await db.collaborators.find({"collaborator_id": {"$in": assignee_ids}}, {"_id": 0}).to_list(100)
+        collab_map = {c["collaborator_id"]: c for c in collabs}
+
+    task_ids = [t["task_id"] for t in tasks]
+    subtask_pipeline = [
+        {"$match": {"parent_task_id": {"$in": task_ids}, **_active_task_filter()}},
+        {"$group": {"_id": "$parent_task_id", "count": {"$sum": 1}, "completed": {"$sum": {"$cond": [{"$eq": ["$status", "DONE"]}, 1, 0]}}}},
+    ]
+    subtask_agg = await db.operational_tasks.aggregate(subtask_pipeline).to_list(1000)
+    subtask_map = {s["_id"]: s for s in subtask_agg}
+
+    for task in tasks:
+        task["assignee"] = collab_map.get(task.get("assignee_id"))
+        sc = subtask_map.get(task["task_id"], {"count": 0, "completed": 0})
+        task["subtask_count"] = sc["count"]
+        task["completed_subtasks"] = sc["completed"]
+
+    return tasks
+
+
+@api_router.post("/clients/{client_id}/tasks")
+async def create_client_task(client_id: str, body: TaskCreate, current_user: dict = Depends(get_current_user)):
+    client = await db.clients.find_one({"client_id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    last_task = await db.operational_tasks.find_one(
+        {"client_id": client_id, "parent_task_id": body.parent_task_id},
+        {"_id": 0, "position": 1}, sort=[("position", -1)],
+    )
+    position = (last_task["position"] + 1) if last_task else 0
+    task_id = f"task_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "task_id": task_id, "client_id": client_id, "parent_task_id": body.parent_task_id,
+        "title": body.title, "status": body.status, "priority": body.priority,
+        "assignee_id": body.assignee_id, "start_date": body.start_date, "due_date": body.due_date,
+        "estimated_minutes": body.estimated_minutes, "tracked_minutes": 0, "position": position,
+        "is_recurring": body.is_recurring, "recurring_rule": body.recurring_rule,
+        "comment_count": 0, "deleted_at": None, "created_at": now, "updated_at": now,
+    }
+    await db.operational_tasks.insert_one(doc)
+    result = {k: v for k, v in doc.items() if k != "_id"}
+    result["assignee"] = None
+    result["subtask_count"] = 0
+    result["completed_subtasks"] = 0
+    return result
+
+
+# ============= TASK MANAGEMENT =============
+
+@api_router.patch("/tasks/reorder")
+async def reorder_tasks(body: TaskBatchReorderRequest, current_user: dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc).isoformat()
+    for item in body.tasks:
+        await db.operational_tasks.update_one(
+            {"task_id": item.task_id},
+            {"$set": {"position": item.position, "updated_at": now}},
+        )
+    return {"message": "Tarefas reordenadas com sucesso"}
+
+
+@api_router.patch("/tasks/{task_id}")
+async def update_task(task_id: str, body: TaskUpdate, current_user: dict = Depends(get_current_user)):
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    now = datetime.now(timezone.utc).isoformat()
+    update_data["updated_at"] = now
+    if update_data.get("status") == "DONE":
+        update_data["completed_at"] = now
+    elif "status" in update_data and update_data["status"] != "DONE":
+        update_data["completed_at"] = None
+    result = await db.operational_tasks.update_one(
+        {"task_id": task_id, **_active_task_filter()}, {"$set": update_data}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    task = await db.operational_tasks.find_one({"task_id": task_id}, {"_id": 0})
+    if task:
+        task["assignee"] = (
+            await db.collaborators.find_one({"collaborator_id": task["assignee_id"]}, {"_id": 0})
+            if task.get("assignee_id") else None
+        )
+    return task
+
+
+@api_router.delete("/tasks/{task_id}")
+async def delete_task(task_id: str, current_user: dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.operational_tasks.update_one(
+        {"task_id": task_id}, {"$set": {"deleted_at": now, "updated_at": now}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    return {"deleted_at": now, "task_id": task_id}
+
+
+@api_router.post("/tasks/{task_id}/time")
+async def log_time(task_id: str, body: TimeLogCreate, current_user: dict = Depends(get_current_user)):
+    task = await db.operational_tasks.find_one({"task_id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    if body.minutes <= 0:
+        raise HTTPException(status_code=400, detail="Minutos deve ser positivo")
+    log_id = f"timelog_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    await db.task_time_logs.insert_one({
+        "log_id": log_id, "task_id": task_id, "collaborator_id": None,
+        "minutes": body.minutes, "note": body.note, "logged_at": now,
+    })
+    new_tracked = (task.get("tracked_minutes") or 0) + body.minutes
+    await db.operational_tasks.update_one(
+        {"task_id": task_id}, {"$set": {"tracked_minutes": new_tracked, "updated_at": now}}
+    )
+    return {"log_id": log_id, "task_id": task_id, "minutes": body.minutes, "tracked_minutes": new_tracked}
+
+
+@api_router.get("/tasks/{task_id}/comments")
+async def list_comments(task_id: str, current_user: dict = Depends(get_current_user)):
+    return await db.task_comments.find({"task_id": task_id}, {"_id": 0}).sort("created_at", 1).to_list(200)
+
+
+@api_router.post("/tasks/{task_id}/comments")
+async def add_comment(task_id: str, body: TaskCommentCreate, current_user: dict = Depends(get_current_user)):
+    task = await db.operational_tasks.find_one({"task_id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    comment_id = f"comment_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "comment_id": comment_id, "task_id": task_id,
+        "author_id": current_user["user_id"],
+        "author_name": body.author_name or current_user.get("name", "Usuário"),
+        "content": body.content, "created_at": now,
+    }
+    await db.task_comments.insert_one(doc)
+    await db.operational_tasks.update_one({"task_id": task_id}, {"$inc": {"comment_count": 1}})
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+# ============= OPERATIONAL SUMMARY =============
+
+@api_router.get("/operational/summary")
+async def get_operational_summary(manager_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    clients = await db.clients.find({"status": "ativo"}, {"_id": 0}).to_list(500)
+    if not clients:
+        return []
+    client_ids = [c["client_id"] for c in clients]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    task_pipeline = [
+        {"$match": {"client_id": {"$in": client_ids}, **_active_task_filter()}},
+        {"$group": {
+            "_id": "$client_id",
+            "total": {"$sum": 1},
+            "done": {"$sum": {"$cond": [{"$eq": ["$status", "DONE"]}, 1, 0]}},
+            "todo": {"$sum": {"$cond": [{"$eq": ["$status", "TO_DO"]}, 1, 0]}},
+            "in_progress": {"$sum": {"$cond": [{"$eq": ["$status", "IN_PROGRESS"]}, 1, 0]}},
+            "overdue": {"$sum": {"$cond": [
+                {"$and": [
+                    {"$not": [{"$in": ["$status", ["DONE", "CANCELLED"]]}]},
+                    {"$ne": ["$due_date", None]}, {"$lt": ["$due_date", now_iso]},
+                ]}, 1, 0,
+            ]}},
+        }},
+    ]
+    task_agg = await db.operational_tasks.aggregate(task_pipeline).to_list(1000)
+    task_map = {t["_id"]: t for t in task_agg}
+
+    cc_pipeline = [
+        {"$match": {"client_id": {"$in": client_ids}, "role": "responsible"}},
+        {"$project": {"_id": 0}},
+        {"$lookup": {"from": "collaborators", "localField": "collaborator_id", "foreignField": "collaborator_id", "as": "collab_list"}},
+        {"$addFields": {"collaborator": {"$ifNull": [{"$first": "$collab_list"}, None]}}},
+        {"$project": {"collab_list": 0, "collaborator._id": 0}},
+    ]
+    cc_data = await db.client_collaborators.aggregate(cc_pipeline).to_list(1000)
+    cc_map = {cc["client_id"]: cc for cc in cc_data}
+
+    op_cards = await db.operational_cards.find({"client_id": {"$in": client_ids}}, {"_id": 0}).to_list(500)
+    op_map = {o["client_id"]: o for o in op_cards}
+
+    result = []
+    for client in clients:
+        cid = client["client_id"]
+        cc = cc_map.get(cid)
+        responsible = cc["collaborator"] if cc and cc.get("collaborator") else None
+        if manager_id:
+            if not responsible or responsible.get("collaborator_id") != manager_id:
+                continue
+        task_info = task_map.get(cid, {"total": 0, "done": 0, "todo": 0, "in_progress": 0, "overdue": 0})
+        op = op_map.get(cid, {})
+        result.append({
+            "client": client, "responsible_collaborator": responsible,
+            "task_summary": {
+                "total": task_info.get("total", 0), "done": task_info.get("done", 0),
+                "todo": task_info.get("todo", 0), "in_progress": task_info.get("in_progress", 0),
+                "overdue": task_info.get("overdue", 0),
+            },
+            "services": {
+                "meta_ads": op.get("meta_ads", False), "google_ads": op.get("google_ads", False),
+                "auto_reports": op.get("auto_reports", False), "alerts": op.get("alerts", False),
+            },
+        })
+    return result
 
 
 # ============= DASHBOARD ENDPOINTS =============

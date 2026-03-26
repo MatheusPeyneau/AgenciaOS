@@ -13,6 +13,7 @@ import Clientes from "@/pages/clientes/Clientes";
 import Financeiro from "@/pages/financeiro/Financeiro";
 import Conteudo from "@/pages/conteudo/Conteudo";
 import Operacional from "@/pages/operacional/Operacional";
+import ClientTaskDashboard from "@/pages/operacional/ClientTaskDashboard";
 import RH from "@/pages/rh/RH";
 import Configuracoes from "@/pages/configuracoes/Configuracoes";
 import "@/App.css";
@@ -45,6 +46,7 @@ function AppRouter() {
         <Route path="financeiro" element={<Financeiro />} />
         <Route path="conteudo" element={<Conteudo />} />
         <Route path="operacional" element={<Operacional />} />
+        <Route path="operacional/:clientId" element={<ClientTaskDashboard />} />
         <Route path="rh" element={<RH />} />
         <Route path="configuracoes" element={<Configuracoes />} />
       </Route>

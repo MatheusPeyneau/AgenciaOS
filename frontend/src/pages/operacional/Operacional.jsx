@@ -3,7 +3,18 @@ import axios from "axios";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { BarChart2, TrendingUp, Search, Bell, FileBarChart, CheckCircle2, XCircle, Loader2, Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  BarChart2, Users, Plus, Trash2, CheckCircle2, LayoutDashboard,
+  TrendingUp, Search, FileBarChart, Bell, ChevronRight, Loader2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -13,159 +24,282 @@ function getAuthHeader() {
   return { Authorization: `Bearer ${token}` };
 }
 
-const SERVICES = [
-  {
-    key: "meta_ads",
-    label: "Meta Ads",
-    icon: TrendingUp,
-    desc: "Facebook & Instagram Ads",
-    activeColor: "bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800",
-    iconColor: "text-blue-600 dark:text-blue-400",
-  },
-  {
-    key: "google_ads",
-    label: "Google Ads",
-    icon: Search,
-    desc: "Search, Display & YouTube",
-    activeColor: "bg-emerald-50 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800",
-    iconColor: "text-emerald-600 dark:text-emerald-400",
-  },
-  {
-    key: "auto_reports",
-    label: "Relatórios Auto",
-    icon: FileBarChart,
-    desc: "Relatórios mensais automáticos",
-    activeColor: "bg-purple-50 border-purple-200 dark:bg-purple-900/20 dark:border-purple-800",
-    iconColor: "text-purple-600 dark:text-purple-400",
-  },
-  {
-    key: "alerts",
-    label: "Alertas",
-    icon: Bell,
-    desc: "Alertas de performance",
-    activeColor: "bg-amber-50 border-amber-200 dark:bg-amber-900/20 dark:border-amber-800",
-    iconColor: "text-amber-600 dark:text-amber-400",
-  },
-];
+const ROLE_LABELS = { manager: "Gestor", analyst: "Analista", designer: "Designer" };
+const ROLE_COLORS = {
+  manager: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+  analyst: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  designer: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400",
+};
 
-function getStatusBadge(card) {
-  const active = SERVICES.filter((s) => card[s.key]).length;
-  if (active === 0) return { label: "Sem serviços", className: "bg-muted text-muted-foreground" };
-  if (active <= 2) return { label: "Básico", className: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" };
-  return { label: "Completo", className: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" };
+function getInitials(name) {
+  if (!name) return "?";
+  return name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 }
 
-function ServiceTile({ service, active, toggling, onToggle }) {
+function Avatar({ name, size = "sm" }) {
+  const sz = size === "sm" ? "w-7 h-7 text-xs" : "w-9 h-9 text-sm";
   return (
-    <button
-      onClick={() => onToggle(service.key, !active)}
-      disabled={toggling}
-      role="switch"
-      aria-checked={active}
-      aria-label={`${service.label}: ${active ? "ativo" : "inativo"}`}
-      data-testid={`service-toggle-${service.key}`}
-      className={cn(
-        "flex flex-col items-start gap-2 p-3 rounded-lg border transition-all text-left w-full",
-        active ? service.activeColor : "bg-muted/20 border-border hover:bg-muted/40",
-        toggling && "opacity-60 cursor-not-allowed"
-      )}
-    >
-      <div className="flex items-center justify-between w-full">
-        <service.icon size={16} className={active ? service.iconColor : "text-muted-foreground"} />
-        {toggling ? (
-          <Loader2 size={12} className="animate-spin text-muted-foreground" />
-        ) : active ? (
-          <CheckCircle2 size={12} className={service.iconColor} />
-        ) : (
-          <div className="w-3 h-3 rounded-full border-2 border-muted-foreground/30" />
-        )}
-      </div>
-      <div>
-        <p className={cn("text-xs font-semibold", active ? "text-foreground" : "text-muted-foreground")}>
-          {service.label}
-        </p>
-        <p className="text-xs text-muted-foreground leading-tight">{service.desc}</p>
-      </div>
-    </button>
-  );
-}
-
-function OperationalClientCard({ card, onUpdate }) {
-  const [toggling, setToggling] = useState({});
-  const badge = getStatusBadge(card);
-  const client = card.client || {};
-
-  const handleToggle = async (serviceKey, value) => {
-    setToggling((prev) => ({ ...prev, [serviceKey]: true }));
-    try {
-      const res = await axios.patch(
-        `${API}/operational/${card.client_id}`,
-        { [serviceKey]: value },
-        { headers: getAuthHeader() }
-      );
-      onUpdate(card.client_id, { ...card, [serviceKey]: value });
-    } catch {
-      toast.error("Erro ao atualizar serviço.");
-    }
-    setToggling((prev) => ({ ...prev, [serviceKey]: false }));
-  };
-
-  return (
-    <div
-      className="bg-card border border-border rounded-lg p-5 flex flex-col gap-4"
-      data-testid={`op-card-${card.client_id}`}
-    >
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-heading font-semibold text-base truncate">{client.name || "Cliente"}</p>
-          <p className="text-xs text-muted-foreground truncate">{client.company || client.email || "—"}</p>
-        </div>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${badge.className}`}>
-          {badge.label}
-        </span>
-      </div>
-
-      {/* Services grid */}
-      <div className="grid grid-cols-2 gap-2">
-        {SERVICES.map((svc) => (
-          <ServiceTile
-            key={svc.key}
-            service={svc}
-            active={!!card[svc.key]}
-            toggling={!!toggling[svc.key]}
-            onToggle={handleToggle}
-          />
-        ))}
-      </div>
+    <div className={cn("rounded-full bg-primary/15 text-primary flex items-center justify-center font-semibold shrink-0", sz)}>
+      {getInitials(name)}
     </div>
   );
 }
 
+function ServicePills({ services }) {
+  const active = [
+    services?.meta_ads && "Meta",
+    services?.google_ads && "Google",
+    services?.auto_reports && "Relatórios",
+    services?.alerts && "Alertas",
+  ].filter(Boolean);
+  if (active.length === 0) return <span className="text-xs text-muted-foreground">Sem serviços ativos</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {active.map((s) => (
+        <span key={s} className="text-xs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800">
+          {s}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ClientSummaryCard({ item, onNavigate }) {
+  const { client, responsible_collaborator, task_summary, services } = item;
+  const { total = 0, done = 0, todo = 0, overdue = 0 } = task_summary || {};
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 flex flex-col gap-4 hover:border-primary/30 transition-all" data-testid={`summary-card-${client.client_id}`}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-heading font-semibold text-base truncate">{client.name}</p>
+          <p className="text-xs text-muted-foreground truncate">{client.company || client.email || "—"}</p>
+        </div>
+        <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+          R$ {(client.monthly_value || 0).toLocaleString("pt-BR")}
+        </span>
+      </div>
+
+      {/* Responsible */}
+      <div className="flex items-center gap-2">
+        {responsible_collaborator ? (
+          <>
+            <Avatar name={responsible_collaborator.name} />
+            <div>
+              <p className="text-xs font-medium leading-tight">{responsible_collaborator.name}</p>
+              <p className="text-xs text-muted-foreground">{ROLE_LABELS[responsible_collaborator.role] || responsible_collaborator.role}</p>
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground italic">Sem responsável atribuído</p>
+        )}
+      </div>
+
+      {/* Task summary */}
+      <div className="border border-border rounded-lg p-3 space-y-1.5 bg-muted/20">
+        <div className="flex items-center justify-between text-xs">
+          <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 size={12} /> {done} concluídas
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="w-2 h-2 rounded-full border-2 border-muted-foreground/40" /> {todo} a fazer
+          </span>
+          {overdue > 0 && (
+            <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400 font-medium">
+              ⚠ {overdue} atrasada{overdue !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+        <div className="w-full bg-muted rounded-full h-1.5">
+          <div
+            className="bg-emerald-500 h-1.5 rounded-full transition-all"
+            style={{ width: total > 0 ? `${Math.round((done / total) * 100)}%` : "0%" }}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">{total} tarefa{total !== 1 ? "s" : ""} total</p>
+      </div>
+
+      {/* Services */}
+      <ServicePills services={services} />
+
+      {/* Action */}
+      <Button
+        size="sm"
+        className="w-full gap-2"
+        onClick={() => onNavigate(client.client_id)}
+        data-testid={`dashboard-btn-${client.client_id}`}
+      >
+        <LayoutDashboard size={14} />
+        Ver Dashboard
+      </Button>
+    </div>
+  );
+}
+
+function CollaboratorModal({ open, onClose }) {
+  const [collaborators, setCollaborators] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({ name: "", email: "", role: "analyst" });
+  const [saving, setSaving] = useState(false);
+
+  const fetchCollaborators = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/collaborators`, { headers: getAuthHeader() });
+      setCollaborators(res.data);
+    } catch { toast.error("Erro ao carregar colaboradores"); }
+    setLoading(false);
+  };
+
+  useEffect(() => { if (open) fetchCollaborators(); }, [open]);
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      await axios.post(`${API}/collaborators`, form, { headers: getAuthHeader() });
+      setForm({ name: "", email: "", role: "analyst" });
+      toast.success("Colaborador adicionado!");
+      await fetchCollaborators();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Erro ao criar colaborador");
+    }
+    setSaving(false);
+  };
+
+  const handleDeactivate = async (id) => {
+    try {
+      await axios.delete(`${API}/collaborators/${id}`, { headers: getAuthHeader() });
+      setCollaborators((prev) => prev.filter((c) => c.collaborator_id !== id));
+      toast.success("Colaborador removido");
+    } catch { toast.error("Erro ao remover colaborador"); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-md" data-testid="team-modal">
+        <DialogHeader>
+          <DialogTitle className="font-heading flex items-center gap-2">
+            <Users size={16} /> Gerenciar Equipe
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Add form */}
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Nome *</Label>
+              <Input
+                placeholder="Nome do colaborador"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                data-testid="collab-name-input"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Email</Label>
+              <Input
+                placeholder="email@agencia.com"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                data-testid="collab-email-input"
+              />
+            </div>
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs">Função</Label>
+              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                <SelectTrigger data-testid="collab-role-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manager">Gestor</SelectItem>
+                  <SelectItem value="analyst">Analista</SelectItem>
+                  <SelectItem value="designer">Designer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button size="sm" onClick={handleCreate} disabled={saving || !form.name.trim()} data-testid="collab-add-btn">
+              <Plus size={14} className="mr-1" /> Adicionar
+            </Button>
+          </div>
+        </div>
+
+        {/* List */}
+        <div className="border-t border-border pt-3 max-h-60 overflow-y-auto space-y-2">
+          {loading ? (
+            <div className="flex justify-center py-4"><Loader2 size={18} className="animate-spin text-muted-foreground" /></div>
+          ) : collaborators.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-3">Nenhum colaborador cadastrado</p>
+          ) : collaborators.map((c) => (
+            <div key={c.collaborator_id} className="flex items-center gap-3 p-2 rounded-lg bg-muted/30">
+              <Avatar name={c.name} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{c.name}</p>
+                <p className="text-xs text-muted-foreground truncate">{c.email || "—"}</p>
+              </div>
+              <span className={cn("text-xs px-1.5 py-0.5 rounded-full font-medium", ROLE_COLORS[c.role])}>
+                {ROLE_LABELS[c.role] || c.role}
+              </span>
+              <button
+                onClick={() => handleDeactivate(c.collaborator_id)}
+                className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                data-testid={`deactivate-collab-${c.collaborator_id}`}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Operacional() {
-  const [cards, setCards] = useState([]);
+  const [summary, setSummary] = useState([]);
+  const [managers, setManagers] = useState([]);
+  const [selectedManager, setSelectedManager] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [teamModalOpen, setTeamModalOpen] = useState(false);
   const navigate = useNavigate();
 
-  const fetchCards = async () => {
+  const fetchData = async (managerId = "all") => {
+    setLoading(true);
     try {
-      const res = await axios.get(`${API}/operational`, { headers: getAuthHeader() });
-      setCards(res.data);
+      const url = managerId !== "all"
+        ? `${API}/operational/summary?manager_id=${managerId}`
+        : `${API}/operational/summary`;
+      const [summaryRes, managersRes] = await Promise.all([
+        axios.get(url, { headers: getAuthHeader() }),
+        axios.get(`${API}/collaborators?role=manager`, { headers: getAuthHeader() }),
+      ]);
+      setSummary(summaryRes.data);
+      setManagers(managersRes.data);
     } catch (err) {
-      console.error("Error fetching operational cards:", err);
+      console.error("Error fetching operational summary:", err);
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchCards(); }, []);
+  useEffect(() => { fetchData(); }, []);
 
-  const handleUpdate = useCallback((clientId, updatedCard) => {
-    setCards((prev) => prev.map((c) => c.client_id === clientId ? updatedCard : c));
+  const handleManagerChange = (value) => {
+    setSelectedManager(value);
+    fetchData(value);
+    localStorage.setItem("agenciaos_manager_filter", value);
+  };
+
+  useEffect(() => {
+    const saved = localStorage.getItem("agenciaos_manager_filter");
+    if (saved) { setSelectedManager(saved); fetchData(saved); }
+    else fetchData();
   }, []);
 
-  const activeCount = cards.reduce((sum, c) => {
-    return sum + SERVICES.filter((s) => c[s.key]).length;
-  }, 0);
+  const totalTasks = summary.reduce((sum, item) => sum + (item.task_summary?.total || 0), 0);
+  const totalDone = summary.reduce((sum, item) => sum + (item.task_summary?.done || 0), 0);
 
   if (loading) {
     return (
@@ -177,42 +311,75 @@ export default function Operacional() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-heading font-bold tracking-tight">Operacional</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {cards.length} cliente{cards.length !== 1 ? "s" : ""} &bull; {activeCount} serviço{activeCount !== 1 ? "s" : ""} ativo{activeCount !== 1 ? "s" : ""}
+            {summary.length} cliente{summary.length !== 1 ? "s" : ""} &bull; {totalDone}/{totalTasks} tarefas concluídas
           </p>
         </div>
-        <Button variant="outline" onClick={() => navigate("/clientes")} data-testid="go-to-clients-button">
-          <Plus size={15} className="mr-2" />
-          Novo Cliente
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Manager filter */}
+          <Select value={selectedManager} onValueChange={handleManagerChange}>
+            <SelectTrigger className="w-48" data-testid="manager-filter">
+              <SelectValue placeholder="Todos os gestores" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os gestores</SelectItem>
+              {managers.map((m) => (
+                <SelectItem key={m.collaborator_id} value={m.collaborator_id}>
+                  {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" onClick={() => setTeamModalOpen(true)} data-testid="manage-team-btn">
+            <Users size={15} className="mr-2" />
+            Gerenciar Equipe
+          </Button>
+          <Button variant="outline" onClick={() => navigate("/clientes")} data-testid="new-client-btn">
+            <Plus size={15} className="mr-2" />
+            Novo Cliente
+          </Button>
+        </div>
       </div>
 
-      {cards.length === 0 ? (
+      {/* Empty state */}
+      {summary.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <BarChart2 size={44} className="text-muted-foreground opacity-30 mb-4" />
-          <p className="text-base font-medium">Nenhum cliente operacional</p>
-          <p className="text-sm text-muted-foreground mt-1 mb-5">
-            Os cards operacionais são criados automaticamente ao cadastrar um cliente.
+          <p className="text-base font-medium">
+            {selectedManager !== "all" ? "Nenhum cliente atribuído a este gestor" : "Nenhum cliente ativo"}
           </p>
-          <Button onClick={() => navigate("/clientes")} data-testid="empty-state-add-client">
-            <Plus size={15} className="mr-2" />
-            Cadastrar primeiro cliente
-          </Button>
+          <p className="text-sm text-muted-foreground mt-1 mb-5">
+            {selectedManager !== "all"
+              ? "Atribua clientes ao gestor na página do dashboard do cliente."
+              : "Cadastre clientes para ver os dashboards operacionais."}
+          </p>
+          {selectedManager !== "all" ? (
+            <Button variant="outline" onClick={() => handleManagerChange("all")} data-testid="clear-manager-filter">
+              Ver todos os clientes
+            </Button>
+          ) : (
+            <Button onClick={() => navigate("/clientes")} data-testid="empty-add-client">
+              <Plus size={15} className="mr-2" /> Cadastrar primeiro cliente
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {cards.map((card) => (
-            <OperationalClientCard
-              key={card.client_id}
-              card={card}
-              onUpdate={handleUpdate}
+          {summary.map((item) => (
+            <ClientSummaryCard
+              key={item.client.client_id}
+              item={item}
+              onNavigate={(clientId) => navigate(`/operacional/${clientId}`)}
             />
           ))}
         </div>
       )}
+
+      <CollaboratorModal open={teamModalOpen} onClose={() => setTeamModalOpen(false)} />
     </div>
   );
 }
