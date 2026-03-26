@@ -1,0 +1,143 @@
+{
+  "theme": {
+    "archetype": "Archetype 4 (Swiss & High-Contrast)",
+    "mode": "light and dark",
+    "rationale": "Perfect for a SaaS platform aimed at Marketing Agencies (Notion/HubSpot style). Prioritizes data clarity, structural hierarchy, and functional beauty with a professional yet modern aesthetic."
+  },
+  "typography": {
+    "headings": {
+      "family": "Outfit",
+      "weights": ["500", "600", "700"],
+      "tracking": "tracking-tight",
+      "h1": "text-4xl sm:text-5xl font-bold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "h4": "text-lg sm:text-xl font-medium",
+      "note": "CRITICAL: Never use Inter for headings."
+    },
+    "body": {
+      "family": "Plus Jakarta Sans",
+      "weights": ["400", "500"],
+      "sizes": {
+        "default": "text-base",
+        "small": "text-sm",
+        "label": "text-xs uppercase tracking-[0.2em] font-semibold"
+      },
+      "line_height": "leading-relaxed"
+    }
+  },
+  "colors": {
+    "light": {
+      "background": "#FAFAFA",
+      "surface": "#FFFFFF",
+      "foreground": "#09090B",
+      "muted": "#F4F4F5",
+      "muted_foreground": "#71717A",
+      "border": "#E4E4E7",
+      "primary": "#0044FF",
+      "primary_foreground": "#FFFFFF",
+      "sidebar": "#FFFFFF",
+      "sidebar_border": "#E4E4E7",
+      "kanban_column": "#F4F4F5"
+    },
+    "dark": {
+      "background": "#09090B",
+      "surface": "#121214",
+      "foreground": "#FAFAFA",
+      "muted": "#27272A",
+      "muted_foreground": "#A1A1AA",
+      "border": "#27272A",
+      "primary": "#3B82F6",
+      "primary_foreground": "#FFFFFF",
+      "sidebar": "#09090B",
+      "sidebar_border": "#27272A",
+      "kanban_column": "#121214"
+    },
+    "status": {
+      "success": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+      "warning": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+      "danger": "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+      "info": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+    }
+  },
+  "layout": {
+    "spacing_scale": "Tailwind standard (p-4, p-6, p-8). Generous internal padding (p-6) for dashboard cards to avoid text collision with borders.",
+    "dashboard_grid": {
+      "type": "Control Room Grid",
+      "container": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+      "widgets": {
+        "kpi": "col-span-1",
+        "chart": "col-span-2 lg:col-span-3",
+        "list": "col-span-1 row-span-2"
+      }
+    },
+    "navigation": {
+      "desktop": "Fixed left sidebar (w-64) with 1px right border. Solid background.",
+      "mobile": "Hamburger menu. Do not hide desktop links behind hamburger."
+    },
+    "kanban": {
+      "board": "flex gap-6 overflow-x-auto pb-4 items-start",
+      "column": "w-[320px] shrink-0 flex flex-col gap-4 bg-muted/50 p-4 rounded-lg",
+      "card": "bg-surface border border-border p-4 rounded-md shadow-sm hover:shadow-md transition-shadow cursor-grab"
+    },
+    "surfaces": {
+      "cards": "Flat background, 1px subtle border, rounded-lg (8px radius). No default drop-shadow, rely on borders.",
+      "glassmorphism": "Only use for sticky headers if needed: backdrop-blur-xl bg-surface/80 border-b border-border."
+    }
+  },
+  "interactions": {
+    "hover": "Explicit text and bg color changes on hover (e.g., hover:bg-muted hover:text-foreground). Translate-y-[-2px] for interactive cards.",
+    "focus": "High contrast focus rings: focus:ring-2 focus:ring-primary/50 focus:outline-none",
+    "animations": "Use framer-motion for drag-and-drop in Kanban. Keep transitions crisp (150-200ms) for a snappy SaaS feel."
+  },
+  "components": {
+    "buttons": "Shadcn based. Use primary color heavily limited to core actions (Save, Create Lead). Use outline/ghost variants for secondary actions.",
+    "tables": "Dense rows, 1px border-b, hover:bg-muted/50 on rows. Left-align text, right-align numbers.",
+    "forms": "Use Shadcn Input, Select, Textarea. Labels must be bold and small (text-sm font-medium).",
+    "charts": "Recharts or Shadcn Charts. Tooltips must have dark/light mode contrast."
+  },
+  "testing": {
+    "rules": "All interactive elements (buttons, links, form inputs, kanban cards) MUST include a 'data-testid' attribute using kebab-case role-based naming (e.g., data-testid='create-lead-button')."
+  },
+  "media": {
+    "avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1649433658557-54cf58577c68?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBwcm9maWxlJTIwcGljdHVyZSUyMGhlYWRzaG90fGVufDB8fHx8MTc3NDU2MDA3MHww&ixlib=rb-4.1.0&q=85",
+        "description": "Male professional avatar for CRM or HR module",
+        "category": "avatar"
+      },
+      {
+        "url": "https://images.pexels.com/photos/5906433/pexels-photo-5906433.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Male professional avatar 2 for CRM or HR module",
+        "category": "avatar"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1762522926157-bcc04bf0b10a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBwcm9maWxlJTIwcGljdHVyZSUyMGhlYWRzaG90fGVufDB8fHx8MTc3NDU2MDA3MHww&ixlib=rb-4.1.0&q=85",
+        "description": "Male professional avatar 3",
+        "category": "avatar"
+      }
+    ],
+    "placeholders": [
+      {
+        "url": "https://images.pexels.com/photos/7710139/pexels-photo-7710139.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Team meeting image for 'Projetos' or 'Campanhas' cover images",
+        "category": "cover"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1758873269035-aae0e1fd3422?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MjJ8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB0ZWFtJTIwbWVldGluZyUyMG1hcmtldGluZ3xlbnwwfHx8fDE3NzQ1NjAwNDl8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Modern office team meeting for 'Projetos' covers",
+        "category": "cover"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Ensure FastAPI + React + MongoDB stack is properly configured.",
+    "Install 'Outfit' and 'Plus Jakarta Sans' fonts from Google Fonts.",
+    "Implement Shadcn UI components and customize them based on the 'surfaces' and 'colors' guidelines above (max 8px border-radius, 1px subtle borders, no muddy shadows).",
+    "Build a persistent Sidebar navigation with active states clearly visible.",
+    "For the Kanban module (Módulo Comercial), use a drag-and-drop library (like dnd-kit or react-beautiful-dnd) with a horizontally scrolling container and fixed-width columns.",
+    "Ensure dark mode is fully functional, using the specific dark background/surface colors provided.",
+    "All text must be in Portuguese (BR).",
+    "Strictly follow the 'data-testid' requirement for all interactive elements to ensure testability."
+  ]
+}
