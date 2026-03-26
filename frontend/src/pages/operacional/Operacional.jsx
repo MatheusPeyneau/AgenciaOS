@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import {
   BarChart2, Users, Plus, Trash2, CheckCircle2, LayoutDashboard,
-  TrendingUp, Search, FileBarChart, Bell, ChevronRight, Loader2,
+  Loader2, UserPlus, Check, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -64,9 +64,37 @@ function ServicePills({ services }) {
   );
 }
 
-function ClientSummaryCard({ item, onNavigate }) {
+function ClientSummaryCard({ item, collaborators, onNavigate }) {
   const { client, responsible_collaborator, task_summary, services } = item;
   const { total = 0, done = 0, todo = 0, overdue = 0 } = task_summary || {};
+
+  const [responsible, setResponsible] = useState(responsible_collaborator || null);
+  const [open, setOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClick(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const handleAssign = async (collab) => {
+    if (collab?.collaborator_id === responsible?.collaborator_id) { setOpen(false); return; }
+    setAssigning(true);
+    try {
+      if (responsible) {
+        await axios.delete(`${API}/clients/${client.client_id}/collaborators/${responsible.collaborator_id}`, { headers: getAuthHeader() });
+      }
+      await axios.post(`${API}/clients/${client.client_id}/collaborators`, { collaborator_id: collab.collaborator_id, role: "responsible" }, { headers: getAuthHeader() });
+      setResponsible(collab);
+      toast.success(`${collab.name} definido como responsável`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Erro ao atribuir responsável");
+    }
+    setAssigning(false);
+    setOpen(false);
+  };
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 flex flex-col gap-4 hover:border-primary/30 transition-all" data-testid={`summary-card-${client.client_id}`}>
@@ -81,18 +109,67 @@ function ClientSummaryCard({ item, onNavigate }) {
         </span>
       </div>
 
-      {/* Responsible */}
-      <div className="flex items-center gap-2">
-        {responsible_collaborator ? (
-          <>
-            <Avatar name={responsible_collaborator.name} />
-            <div>
-              <p className="text-xs font-medium leading-tight">{responsible_collaborator.name}</p>
-              <p className="text-xs text-muted-foreground">{ROLE_LABELS[responsible_collaborator.role] || responsible_collaborator.role}</p>
+      {/* Responsible — interactive selector */}
+      <div ref={ref} className="relative">
+        <button
+          onClick={() => collaborators.length > 0 && setOpen((o) => !o)}
+          disabled={assigning || collaborators.length === 0}
+          data-testid={`responsible-selector-${client.client_id}`}
+          className={cn(
+            "w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all",
+            collaborators.length > 0
+              ? "border-border hover:border-primary/50 hover:bg-muted/30 cursor-pointer"
+              : "border-dashed border-border/60 cursor-default opacity-60"
+          )}
+        >
+          {assigning ? (
+            <Loader2 size={14} className="animate-spin text-muted-foreground shrink-0" />
+          ) : responsible ? (
+            <Avatar name={responsible.name} />
+          ) : (
+            <div className="w-7 h-7 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center shrink-0">
+              <UserPlus size={12} className="text-muted-foreground/50" />
             </div>
-          </>
-        ) : (
-          <p className="text-xs text-muted-foreground italic">Sem responsável atribuído</p>
+          )}
+
+          <div className="flex-1 min-w-0">
+            {responsible ? (
+              <>
+                <p className="text-xs font-medium leading-tight truncate">{responsible.name}</p>
+                <p className="text-xs text-muted-foreground">{ROLE_LABELS[responsible.role] || responsible.role}</p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">
+                {collaborators.length === 0 ? "Cadastre colaboradores na equipe" : "Atribuir responsável"}
+              </p>
+            )}
+          </div>
+
+          {collaborators.length > 0 && (
+            <ChevronDown size={13} className={cn("text-muted-foreground transition-transform shrink-0", open && "rotate-180")} />
+          )}
+        </button>
+
+        {open && (
+          <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden">
+            {collaborators.map((c) => (
+              <button
+                key={c.collaborator_id}
+                onClick={() => handleAssign(c)}
+                data-testid={`assign-responsible-${c.collaborator_id}`}
+                className="flex items-center gap-2.5 w-full px-3 py-2 text-left hover:bg-muted transition-colors"
+              >
+                <Avatar name={c.name} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{c.name}</p>
+                  <p className="text-xs text-muted-foreground">{ROLE_LABELS[c.role] || c.role}</p>
+                </div>
+                {responsible?.collaborator_id === c.collaborator_id && (
+                  <Check size={13} className="text-primary shrink-0" />
+                )}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -261,6 +338,7 @@ function CollaboratorModal({ open, onClose }) {
 export default function Operacional() {
   const [summary, setSummary] = useState([]);
   const [managers, setManagers] = useState([]);
+  const [allCollaborators, setAllCollaborators] = useState([]);
   const [selectedManager, setSelectedManager] = useState("all");
   const [loading, setLoading] = useState(true);
   const [teamModalOpen, setTeamModalOpen] = useState(false);
@@ -272,12 +350,14 @@ export default function Operacional() {
       const url = managerId !== "all"
         ? `${API}/operational/summary?manager_id=${managerId}`
         : `${API}/operational/summary`;
-      const [summaryRes, managersRes] = await Promise.all([
+      const [summaryRes, managersRes, allCollabsRes] = await Promise.all([
         axios.get(url, { headers: getAuthHeader() }),
         axios.get(`${API}/collaborators?role=manager`, { headers: getAuthHeader() }),
+        axios.get(`${API}/collaborators`, { headers: getAuthHeader() }),
       ]);
       setSummary(summaryRes.data);
       setManagers(managersRes.data);
+      setAllCollaborators(allCollabsRes.data);
     } catch (err) {
       console.error("Error fetching operational summary:", err);
     }
@@ -373,13 +453,18 @@ export default function Operacional() {
             <ClientSummaryCard
               key={item.client.client_id}
               item={item}
+              collaborators={allCollaborators}
               onNavigate={(clientId) => navigate(`/operacional/${clientId}`)}
             />
           ))}
         </div>
       )}
 
-      <CollaboratorModal open={teamModalOpen} onClose={() => setTeamModalOpen(false)} />
+      <CollaboratorModal
+        open={teamModalOpen}
+        onClose={() => setTeamModalOpen(false)}
+        onCollaboratorsChanged={() => fetchData(selectedManager)}
+      />
     </div>
   );
 }
